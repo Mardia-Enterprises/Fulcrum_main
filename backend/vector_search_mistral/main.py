@@ -1,306 +1,404 @@
 """
-Main script for PDF processing and indexing.
-This script coordinates the entire PDF processing pipeline:
-1. Extract text from PDFs using Mistral OCR
-2. Preprocess and chunk the text
-3. Generate embeddings
-4. Index the embeddings in Pinecone
+PDF Vector Search Engine - Main Module
+-------------------------------------------------------------------------------
+This is the main module for the PDF Vector Search Engine, providing a unified 
+interface to the system's functionality. It orchestrates the various components
+for PDF processing, text extraction, embedding generation, vector storage, and 
+semantic search.
+
+The module is designed for production use, with robust error handling, logging,
+and configuration options. It can be used as a standalone application or
+integrated into larger systems.
+
+Usage Examples:
+    # Process PDFs
+    python -m vector_search_mistral process --pdf-dir /path/to/pdfs
+    
+    # Search for content
+    python -m vector_search_mistral search "your search query"
+    
+    # Advanced search with RAG
+    python -m vector_search_mistral search "your query" --rag --rag-mode detail
 """
 
 import os
-import argparse
-import logging
-import time
 import sys
-import traceback
-import glob
-from typing import List, Dict, Any, Optional, Tuple
+import logging
+import argparse
+import json
+from typing import List, Dict, Any, Optional, Union, Tuple
 from pathlib import Path
-from dotenv import load_dotenv
+import time
+import datetime
 
 # Add the parent directory to the Python path to enable absolute imports
-sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-# Use absolute imports instead of relative imports
-from backend.vector_search_mistral.pdf_processor import MistralPDFProcessor
-from backend.vector_search_mistral.text_preprocessor import TextPreprocessor
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("vector_search")
+
+# Try to load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    logger.info("python-dotenv not installed. Using system environment variables.")
+
+# Import local modules using absolute imports
+from backend.vector_search_mistral.pdf_processor import PDFProcessor, create_pdf_processor
+from backend.vector_search_mistral.text_preprocessor import TextPreprocessor, create_text_preprocessor
 from backend.vector_search_mistral.embeddings_generator import EmbeddingsGenerator
 from backend.vector_search_mistral.pinecone_indexer import PineconeIndexer
 from backend.vector_search_mistral.query_engine import QueryEngine
+from backend.vector_search_mistral.openai_processor import OpenAIProcessor
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
+# Check environment variables
+def check_env_vars() -> bool:
+    """
+    Check if required environment variables are set.
+    
+    Returns:
+        True if all required variables are set, False otherwise
+    """
+    required_vars = [
+        "MISTRAL_API_KEY",
+        "PINECONE_API_KEY",
+        "PINECONE_ENVIRONMENT"
+    ]
+    
+    # OpenAI API key is only required for RAG
+    if os.environ.get("USE_RAG", "").lower() == "true":
+        required_vars.append("OPENAI_API_KEY")
+    
+    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    
+    if missing_vars:
+        logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+        logger.error("Please set these variables in your environment or .env file")
+        return False
+    
+    return True
 
-# Load environment variables
-load_dotenv()
+def init_components() -> Tuple[PDFProcessor, EmbeddingsGenerator, PineconeIndexer, QueryEngine]:
+    """
+    Initialize the main components of the system.
+    
+    Returns:
+        Tuple of (PDFProcessor, EmbeddingsGenerator, PineconeIndexer, QueryEngine)
+    """
+    # Create components
+    pdf_processor = create_pdf_processor()
+    embeddings_generator = EmbeddingsGenerator()
+    vector_db = PineconeIndexer()
+    query_engine = QueryEngine(embeddings_generator, vector_db)
+    
+    return pdf_processor, embeddings_generator, vector_db, query_engine
 
-def process_and_index_pdfs(
-    pdf_dir: str = "pdf_data/raw-files",
-    chunk_size: int = 512,
-    chunk_overlap: int = 128,
-    force_reprocess: bool = False,
-    mistral_api_key: Optional[str] = None,
-    pinecone_api_key: Optional[str] = None,
-    pinecone_region: Optional[str] = None,
-    index_name: str = "pdf-embeddings"
+def process_pdfs(
+    pdf_dir: str,
+    chunk_size: int = 500,
+    chunk_overlap: int = 50,
+    force: bool = False
 ) -> Dict[str, Any]:
     """
-    Process PDF files, extract text, create embeddings, and index them in Pinecone.
+    Process PDF files in a directory for vector search.
+    
+    This function extracts text from PDF files, processes it into chunks,
+    generates embeddings, and stores the vectors in the database.
     
     Args:
         pdf_dir: Directory containing PDF files
-        chunk_size: Max size of text chunks in characters
-        chunk_overlap: Overlap between consecutive chunks in characters
-        force_reprocess: Force reprocessing of all PDFs
-        mistral_api_key: Mistral API key (defaults to env var)
-        pinecone_api_key: Pinecone API key (defaults to env var)
-        pinecone_region: Pinecone environment region (defaults to env var)
-        index_name: Name of the Pinecone index
+        chunk_size: Maximum chunk size for text preprocessing
+        chunk_overlap: Chunk overlap for text preprocessing
+        force: Whether to force reprocessing of existing files
         
     Returns:
         Dictionary with processing statistics
     """
-    start_time = time.time()
-    
-    # Get API keys from environment variables if not provided
-    mistral_api_key = mistral_api_key or os.environ.get("MISTRAL_API_KEY")
-    pinecone_api_key = pinecone_api_key or os.environ.get("PINECONE_API_KEY")
-    pinecone_region = pinecone_region or os.environ.get("PINECONE_REGION")
-    
-    # Check if required API keys are available
-    if not mistral_api_key:
-        logger.warning("Mistral API key not provided and not found in environment variables")
-    
-    if not pinecone_api_key or not pinecone_region:
-        logger.error("Pinecone API key and region are required")
-        return {
-            "status": "error",
-            "message": "Pinecone API key and region are required",
-            "pdfs_processed": 0,
-            "chunks_created": 0,
-            "embeddings_generated": 0,
-            "vectors_indexed": 0,
-            "errors": 1,
-            "processing_time": 0
-        }
+    # Check if pdf_dir exists
+    if not os.path.exists(pdf_dir):
+        raise FileNotFoundError(f"PDF directory not found: {pdf_dir}")
     
     # Initialize components
-    try:
-        pdf_processor = MistralPDFProcessor(mistral_api_key=mistral_api_key)
-        text_preprocessor = TextPreprocessor(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        embeddings_generator = EmbeddingsGenerator(api_key=mistral_api_key)
-        indexer = PineconeIndexer(
-            api_key=pinecone_api_key,
-            environment=pinecone_region,
-            index_name=index_name
-        )
-        
-        logger.info(f"Initialized all components for processing PDFs from {pdf_dir}")
-    except Exception as e:
-        logger.error(f"Error initializing components: {str(e)}")
-        return {
-            "status": "error",
-            "message": f"Error initializing components: {str(e)}",
-            "pdfs_processed": 0,
-            "chunks_created": 0,
-            "embeddings_generated": 0,
-            "vectors_indexed": 0,
-            "errors": 1,
-            "processing_time": 0
-        }
+    pdf_processor = create_pdf_processor(chunk_size, chunk_overlap)
+    embeddings_generator = EmbeddingsGenerator()
+    vector_db = PineconeIndexer()
     
-    # Create PDF directory if it doesn't exist
-    os.makedirs(pdf_dir, exist_ok=True)
+    logger.info(f"Processing PDF files in {pdf_dir}")
+    start_time = time.time()
     
-    # Get list of PDF files
-    pdf_files = glob.glob(os.path.join(pdf_dir, "*.pdf"))
+    # Process PDF directory
+    processed_docs = pdf_processor.process_dir(pdf_dir)
     
-    if not pdf_files:
-        logger.warning(f"No PDF files found in {pdf_dir}")
-        return {
-            "status": "warning",
-            "message": f"No PDF files found in {pdf_dir}",
-            "pdfs_processed": 0,
-            "chunks_created": 0,
-            "embeddings_generated": 0,
-            "vectors_indexed": 0,
-            "errors": 0,
-            "processing_time": time.time() - start_time
-        }
+    # Initialize counters
+    total_pdfs = len(processed_docs)
+    total_chunks = 0
+    total_embeddings = 0
+    error_count = 0
     
-    # Process each PDF file
-    stats = {
-        "pdfs_processed": 0,
-        "chunks_created": 0,
-        "embeddings_generated": 0,
-        "vectors_indexed": 0,
-        "errors": 0
-    }
-    
-    for pdf_file in pdf_files:
+    # Process each document
+    for doc in processed_docs:
         try:
-            pdf_path = Path(pdf_file)
-            logger.info(f"Processing PDF: {pdf_path.name}")
+            # Skip documents with errors
+            if "error" in doc:
+                logger.warning(f"Skipping document with error: {doc.get('filename', 'unknown')}")
+                error_count += 1
+                continue
             
-            # Extract text from PDF
-            extracted_text = pdf_processor.extract_text(str(pdf_path))
+            # Get chunks
+            chunks = doc.get("chunks", [])
+            total_chunks += len(chunks)
             
-            # Split text into chunks
-            chunks = text_preprocessor.process_text(extracted_text)
-            stats["chunks_created"] += len(chunks)
+            if not chunks:
+                logger.warning(f"No chunks found in document: {doc.get('filename', 'unknown')}")
+                continue
             
             # Generate embeddings for chunks
-            embedded_docs = embeddings_generator.generate_embeddings({
-                "id": pdf_path.stem,
-                "text": extracted_text,
-                "chunks": chunks,
-                "metadata": {
-                    "filename": pdf_path.name,
-                    "path": str(pdf_path),
-                    "chunk_count": len(chunks)
+            embeddings = []
+            for i, chunk in enumerate(chunks):
+                # Generate embedding for chunk
+                chunk_embedding = embeddings_generator.generate_embeddings([chunk])[0]
+                
+                # Create document with embedding
+                embedded_doc = {
+                    "id": f"{doc.get('id', 'doc')}_{i}",
+                    "text": chunk,
+                    "embedding": chunk_embedding,
+                    "metadata": {
+                        "filename": doc.get("filename", ""),
+                        "chunk_index": i,
+                        "total_chunks": len(chunks)
+                    }
                 }
-            })
+                
+                embeddings.append(embedded_doc)
             
-            # Index embeddings in Pinecone
-            if embedded_docs:
-                indexer.index_documents(embedded_docs)
-                stats["vectors_indexed"] += len(embedded_docs)
-                stats["embeddings_generated"] += len(embedded_docs)
-                stats["pdfs_processed"] += 1
-                logger.info(f"Successfully processed and indexed {pdf_path.name} with {len(chunks)} chunks")
-            else:
-                logger.error(f"Failed to generate embeddings for {pdf_path.name}")
-                stats["errors"] += 1
+            # Index document embeddings
+            indexed_count = vector_db.index_documents(embeddings)
+            total_embeddings += indexed_count
+            
+            logger.info(f"Processed {doc.get('filename', 'document')}: {len(chunks)} chunks, {indexed_count} vectors indexed")
             
         except Exception as e:
-            logger.error(f"Error processing {pdf_file}: {str(e)}")
-            stats["errors"] += 1
+            logger.error(f"Error processing document {doc.get('filename', 'unknown')}: {str(e)}")
+            error_count += 1
     
     # Calculate processing time
     processing_time = time.time() - start_time
     
-    # Return processing statistics
+    # Create result summary
     result = {
-        "status": "success" if stats["errors"] == 0 else "partial_success",
-        "message": f"Processed {stats['pdfs_processed']} PDFs in {processing_time:.2f} seconds",
+        "total_pdfs": total_pdfs,
+        "total_chunks": total_chunks,
+        "total_embeddings": total_embeddings,
+        "error_count": error_count,
         "processing_time": processing_time,
-        **stats
+        "timestamp": datetime.datetime.now().isoformat()
     }
     
-    logger.info(f"Processing complete: {result['message']}")
+    logger.info(f"Processing complete: {total_pdfs} PDFs, {total_chunks} chunks, {total_embeddings} embeddings, {error_count} errors")
     return result
 
-
-def search_pdfs(
+def search(
     query: str,
     top_k: int = 5,
     alpha: float = 0.5,
-    mistral_api_key: Optional[str] = None,
-    pinecone_api_key: Optional[str] = None,
-    pinecone_region: Optional[str] = None,
-    index_name: str = "pdf-embeddings"
-) -> List[Dict[str, Any]]:
+    use_rag: bool = False,
+    rag_mode: str = "summarize",
+    model: str = "gpt-3.5-turbo",
+    output_file: Optional[str] = None,
+    no_raw: bool = False
+) -> Dict[str, Any]:
     """
-    Search for PDFs using hybrid search.
+    Search for content semantically related to the query.
+    
+    This function performs semantic search using vector embeddings. It can
+    optionally enhance the search results using RAG (Retrieval-Augmented Generation).
     
     Args:
         query: Search query
         top_k: Number of results to return
-        alpha: Weight for hybrid search (0 = BM25, 1 = vector)
-        mistral_api_key: Mistral API key (defaults to env var)
-        pinecone_api_key: Pinecone API key (defaults to env var)
-        pinecone_region: Pinecone environment region (defaults to env var)
-        index_name: Name of the Pinecone index
+        alpha: Weight for hybrid search (1.0 = semantic only)
+        use_rag: Whether to use RAG to enhance results
+        rag_mode: RAG processing mode (summarize, analyze, explain, detail, person)
+        model: OpenAI model to use for RAG
+        output_file: File to save results to
+        no_raw: Whether to hide raw search results in output
         
     Returns:
-        List of search results with metadata
+        Dictionary with search results
     """
-    try:
-        query_engine = QueryEngine(
-            index_name=index_name,
-            mistral_api_key=mistral_api_key,
-            pinecone_api_key=pinecone_api_key,
-            pinecone_region=pinecone_region
-        )
-        
-        results = query_engine.search(query=query, top_k=top_k, alpha=alpha)
-        
-        logger.info(f"Search for '{query}' returned {len(results)} results")
-        return results
-    except Exception as e:
-        logger.error(f"Error during search: {str(e)}")
-        return []
+    # Initialize components
+    embeddings_generator = EmbeddingsGenerator()
+    vector_db = PineconeIndexer()
+    query_engine = QueryEngine(embeddings_generator, vector_db)
+    
+    # Check if this is a person query
+    is_person_query = query_engine.is_person_query(query)
+    person_name = None
+    
+    if is_person_query:
+        person_name = query_engine.extract_person_name(query)
+        logger.info(f"Detected person query for: {person_name}")
+        # Auto-set RAG mode to "person" for person queries
+        if use_rag:
+            rag_mode = "person"
+            logger.info("Auto-setting RAG mode to 'person'")
+    
+    # Perform search
+    start_time = time.time()
+    search_results = query_engine.search(query, top_k=top_k, alpha=alpha)
+    search_time = time.time() - start_time
+    
+    # Prepare result object
+    result = {
+        "query": query,
+        "results_count": len(search_results),
+        "search_time": search_time,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "is_person_query": is_person_query,
+        "person_name": person_name
+    }
+    
+    # Add raw results if requested
+    if not no_raw:
+        result["results"] = search_results
+    
+    # Apply RAG if requested
+    if use_rag and search_results:
+        try:
+            # Initialize OpenAI processor
+            openai_processor = OpenAIProcessor(model=model)
+            
+            # Process results with RAG
+            rag_start_time = time.time()
+            rag_result = openai_processor.summarize_search_results(
+                query=query,
+                search_results=search_results,
+                mode=rag_mode
+            )
+            rag_time = time.time() - rag_start_time
+            
+            # Add RAG results to output
+            result["rag_result"] = rag_result.get("processed_result", "")
+            result["rag_time"] = rag_time
+            result["rag_mode"] = rag_mode
+            result["rag_model"] = model
+            
+        except Exception as e:
+            logger.error(f"Error processing results with RAG: {str(e)}")
+            result["rag_error"] = str(e)
+    
+    # Save results to file if requested
+    if output_file:
+        try:
+            with open(output_file, 'w') as f:
+                json.dump(result, f, indent=2)
+            logger.info(f"Results saved to {output_file}")
+        except Exception as e:
+            logger.error(f"Error saving results to file: {str(e)}")
+    
+    return result
 
-
-def main():
-    """Main function to run PDF processing and search."""
-    parser = argparse.ArgumentParser(description="Process and search PDF documents")
+def parse_args():
+    """
+    Parse command-line arguments.
+    
+    Returns:
+        Parsed command-line arguments
+    """
+    parser = argparse.ArgumentParser(description="PDF Vector Search Engine")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
     
     # Process command
-    process_parser = subparsers.add_parser("process", help="Process and index PDF files")
-    process_parser.add_argument("--pdf-dir", type=str, default="pdf_data/raw-files", 
-                              help="Directory containing PDF files")
-    process_parser.add_argument("--chunk-size", type=int, default=512, 
-                              help="Maximum size of text chunks in characters")
-    process_parser.add_argument("--chunk-overlap", type=int, default=128, 
-                              help="Overlap between consecutive chunks in characters")
-    process_parser.add_argument("--force", action="store_true", 
-                              help="Force reprocessing of all PDFs")
+    process_parser = subparsers.add_parser("process", help="Process PDF files")
+    process_parser.add_argument("--pdf-dir", type=str, required=True, help="Directory containing PDF files")
+    process_parser.add_argument("--chunk-size", type=int, default=500, help="Maximum chunk size")
+    process_parser.add_argument("--chunk-overlap", type=int, default=50, help="Chunk overlap")
+    process_parser.add_argument("--force", action="store_true", help="Force reprocessing of files")
     
     # Search command
-    search_parser = subparsers.add_parser("search", help="Search PDF documents")
+    search_parser = subparsers.add_parser("search", help="Search for content")
     search_parser.add_argument("query", type=str, help="Search query")
-    search_parser.add_argument("--top-k", type=int, default=5, 
-                             help="Number of results to return")
-    search_parser.add_argument("--alpha", type=float, default=0.5, 
-                             help="Weight for hybrid search (0 = sparse only, 1 = dense only)")
+    search_parser.add_argument("--top-k", type=int, default=5, help="Number of results to return")
+    search_parser.add_argument("--alpha", type=float, default=0.5, help="Weight for hybrid search (1.0 = semantic only)")
+    search_parser.add_argument("--rag", action="store_true", help="Use RAG to enhance results")
+    search_parser.add_argument("--rag-mode", type=str, default="summarize", 
+                               choices=["summarize", "analyze", "explain", "detail", "person"],
+                               help="RAG processing mode")
+    search_parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help="OpenAI model for RAG")
+    search_parser.add_argument("--output", type=str, help="File to save results to")
+    search_parser.add_argument("--no-raw", action="store_true", help="Hide raw search results in output")
     
-    # Parse arguments
-    args = parser.parse_args()
-    
-    if args.command == "process":
-        # Process and index PDFs
-        result = process_and_index_pdfs(
-            pdf_dir=args.pdf_dir,
-            chunk_size=args.chunk_size,
-            chunk_overlap=args.chunk_overlap,
-            force_reprocess=args.force
-        )
-        
-        print("\nProcessing Summary:")
-        print(f"Total PDFs processed: {result['pdfs_processed']}")
-        print(f"Chunks created: {result['chunks_created']}")
-        print(f"Embeddings generated: {result['embeddings_generated']}")
-        print(f"Vectors indexed: {result['vectors_indexed']}")
-        print(f"Errors: {result['errors']}")
-        
-    elif args.command == "search":
-        # Search PDFs
-        results = search_pdfs(
-            query=args.query,
-            top_k=args.top_k,
-            alpha=args.alpha
-        )
-        
-        print(f"\nSearch results for: '{args.query}'")
-        print(f"Found {len(results)} matching documents\n")
-        
-        for i, result in enumerate(results):
-            print(f"Document {i+1}: {result['metadata']['filename']}")
-            print(f"Score: {result['score']}")
-            print(f"Text: {result['text'][:200]}...")
-            print()
-    
-    else:
-        # No command provided, show help
-        parser.print_help()
+    return parser.parse_args()
 
+def main():
+    """
+    Main entry point for the application.
+    """
+    # Check environment variables
+    if not check_env_vars():
+        sys.exit(1)
+    
+    # Parse command-line arguments
+    args = parse_args()
+    
+    try:
+        if args.command == "process":
+            # Process PDF files
+            result = process_pdfs(
+                pdf_dir=args.pdf_dir,
+                chunk_size=args.chunk_size,
+                chunk_overlap=args.chunk_overlap,
+                force=args.force
+            )
+            print(json.dumps(result, indent=2))
+            
+        elif args.command == "search":
+            # Search for content
+            result = search(
+                query=args.query,
+                top_k=args.top_k,
+                alpha=args.alpha,
+                use_rag=args.rag,
+                rag_mode=args.rag_mode,
+                model=args.model,
+                output_file=args.output,
+                no_raw=args.no_raw
+            )
+            
+            # Print search results
+            print(f"\nSearch results for: '{args.query}'")
+            print(f"Found {result['results_count']} results")
+            
+            if result['results_count'] == 0:
+                print("No results found for your query.")
+            else:
+                # Print raw results if requested
+                if not args.no_raw and "results" in result:
+                    print("\nRaw Search Results:")
+                    for i, res in enumerate(result["results"]):
+                        print(f"\nResult {i+1} (Score: {res['score']:.4f})")
+                        print(f"File: {res['metadata'].get('filename', 'Unknown')}")
+                        print(f"Text: {res['text'][:200]}...")
+                
+                # Print RAG results if available
+                if "rag_result" in result:
+                    print("\nEnhanced Results:")
+                    print(result["rag_result"])
+            
+        else:
+            print("Please specify a command: process or search")
+            sys.exit(1)
+            
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 

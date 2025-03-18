@@ -1,34 +1,43 @@
-#!/bin/bash
+#!/usr/bin/env python3
+"""
+PDF Vector Search CLI Script
+-------------------------------------------------------------------------------
+Command-line interface for the PDF Vector Search Engine. This script provides
+a convenient command-line entry point to the system's core functionality.
 
-# Get the directory where this script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+For full documentation, please refer to the README.md file.
+"""
 
-# Set the project root directory
-PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
+import os
+import sys
+import logging
+from pathlib import Path
 
-# Path to the virtual environment Python interpreter
-VENV_PYTHON="$PROJECT_ROOT/backend/.venv/bin/python"
+# Add the repository root to the Python path for reliable imports
+script_dir = Path(__file__).resolve().parent
+repo_root = script_dir.parent.parent
+sys.path.insert(0, str(repo_root))
 
-# Check if the virtual environment exists
-if [ ! -f "$VENV_PYTHON" ]; then
-    echo "Error: Python virtual environment not found at $VENV_PYTHON"
-    echo "Please make sure the virtual environment is created in the backend/.venv directory"
-    exit 1
-fi
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("pdf_search_cli")
 
-# Add helpful message if no arguments provided
-if [ $# -eq 0 ]; then
-    echo "PDF Search Engine - Command Line Tool"
-    echo ""
-    echo "Usage:"
-    echo "  pdf-search process [options]    Process and index PDF files"
-    echo "  pdf-search search <query>       Search indexed PDFs"
-    echo ""
-    echo "For more information, run:"
-    echo "  pdf-search process --help"
-    echo "  pdf-search search --help"
-    exit 1
-fi
-
-# Run the Python script with all arguments passed through
-"$VENV_PYTHON" "$SCRIPT_DIR/run.py" "$@" 
+try:
+    # Import the main module
+    from backend.vector_search_mistral.main import main
+    
+    if __name__ == "__main__":
+        # Run the main function
+        main()
+except ImportError as e:
+    logger.error(f"Error importing modules: {str(e)}")
+    logger.error(f"Python path: {sys.path}")
+    logger.error("Make sure you're running this script from the repository root")
+    sys.exit(1)
+except Exception as e:
+    logger.error(f"Error running PDF Search: {str(e)}")
+    sys.exit(1) 

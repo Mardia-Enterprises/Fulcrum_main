@@ -1,252 +1,229 @@
 """
-Embeddings Generator for PDF content.
-This module generates dense and sparse embeddings for text chunks to support hybrid search.
+Embeddings Generator for Vector Search
+-------------------------------------------------------------------------------
+This module generates vector embeddings for text using the Mistral AI's embedding model.
+It provides robust functionality for converting text chunks into vector embeddings
+that can be used for semantic search and retrieval.
+
+In production environments, this module connects to Mistral's API to generate
+high-quality embeddings.
+
+Key features:
+- Production-ready embedding generation with Mistral AI
+- Robust error handling and retries
+- Batched processing for efficiency
 """
 
 import os
-import sys
 import logging
-import random
-import hashlib
-from typing import List, Dict, Any, Optional
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+import sys
+import time
+from typing import List, Dict, Any, Union, Optional
+from pathlib import Path
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("embeddings_generator")
 
-# Import Mistral AI client
+# Load environment variables
 try:
-    from mistralai.client import MistralClient
-    from mistralai.models.embeddings import EmbeddingResponse
+    from dotenv import load_dotenv
+    load_dotenv()
 except ImportError:
-    logger.warning("Mistral API package not found. Install with: pip install mistralai")
-    # Create stub classes to avoid errors
-    class MistralClient:
-        def __init__(self, api_key=None):
-            pass
-        
-        def embeddings(self, model=None, input=None):
-            # Generate mock embeddings
-            mock_data = []
-            for text in input:
-                # Create a deterministic but unique mock embedding based on the text
-                mock_embedding = _generate_deterministic_embedding(text)
-                mock_data.append({"embedding": mock_embedding})
-            return {"data": mock_data}
-    
-    class EmbeddingResponse:
-        pass
+    logger.info("python-dotenv not installed. Using system environment variables.")
 
-def _generate_deterministic_embedding(text: str, dimension: int = 1024) -> List[float]:
-    """
-    Generate a deterministic embedding based on text hash.
-    
-    Args:
-        text: Text to generate embedding for
-        dimension: Embedding dimension
-        
-    Returns:
-        A deterministic vector of floats
-    """
-    # Create a hash of the text
-    text_hash = hashlib.md5(text.encode()).hexdigest()
-    
-    # Use the hash to seed the random number generator
-    random.seed(text_hash)
-    
-    # Generate deterministic values based on the text hash
-    embedding = [random.uniform(-1, 1) for _ in range(dimension)]
-    
-    # Normalize to unit vector
-    magnitude = sum(x*x for x in embedding) ** 0.5
-    if magnitude > 0:  # Avoid division by zero
-        embedding = [x / magnitude for x in embedding]
-    else:
-        # If for some reason we got all zeros, use a non-zero vector
-        embedding = [0.1] * dimension
-        embedding[0] = 0.9  # Make first element larger for consistency
-    
-    return embedding
+# Import Mistral with error handling
+try:
+    from mistralai import Mistral
+    MISTRAL_AVAILABLE = True
+except ImportError:
+    logger.error("Mistral AI package not found. Install with: pip install mistralai>=1.5.0")
+    MISTRAL_AVAILABLE = False
+    Mistral = None
+
+# Default settings
+DEFAULT_EMBEDDING_MODEL = "mistral-embed"
+DEFAULT_BATCH_SIZE = 10
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY = 1.0
 
 class EmbeddingsGenerator:
     """
-    Generate embeddings for text using Mistral AI API.
+    Generate vector embeddings for text chunks using Mistral AI's embedding model.
+    
+    This class provides an interface to Mistral's embedding API for production use.
     """
     
     def __init__(
-        self, 
-        api_key: Optional[str] = None, 
-        model: str = "mistral-embed"
+        self,
+        api_key: Optional[str] = None,
+        model_name: str = DEFAULT_EMBEDDING_MODEL,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_delay: float = DEFAULT_RETRY_DELAY
     ):
         """
         Initialize the embeddings generator.
         
         Args:
             api_key: Mistral API key (defaults to MISTRAL_API_KEY env var)
-            model: Mistral embedding model to use
+            model_name: Name of the embedding model to use
+            batch_size: Number of texts to process in a single API call
+            max_retries: Maximum number of retries for API calls
+            retry_delay: Base delay between retries (in seconds)
         """
         # Get API key from environment variables if not provided
         self.api_key = api_key or os.environ.get("MISTRAL_API_KEY")
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.client = None
+        
+        # Initialize client
+        if not MISTRAL_AVAILABLE:
+            logger.error("Mistral AI package not available. Cannot generate embeddings.")
+            raise ImportError("Mistral AI package is required but not installed. Install with: pip install mistralai>=1.5.0")
         
         if not self.api_key:
-            logger.warning("Mistral API key not provided and not found in environment variables")
+            logger.error("Mistral API key not provided and not found in environment variables.")
+            raise ValueError("Mistral API key is required. Set MISTRAL_API_KEY environment variable or provide api_key parameter.")
         
-        self.model = model
-        
-        # Initialize Mistral client
         try:
-            self.client = MistralClient(api_key=self.api_key)
-            logger.info(f"Initialized EmbeddingsGenerator with model: {model}")
+            self.client = Mistral(api_key=self.api_key)
+            logger.info(f"Initialized EmbeddingsGenerator with model: {model_name}")
         except Exception as e:
             logger.error(f"Error initializing Mistral client: {str(e)}")
-            self.client = None
+            raise
     
-    def generate_embeddings(self, document: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        Generate embeddings for a document with chunks.
+        Generate embeddings for a list of text chunks.
+        
+        This method processes the texts in batches for efficiency and
+        applies retry logic for robustness in production environments.
         
         Args:
-            document: Dictionary containing document text and chunks
+            texts: List of text chunks to embed
             
         Returns:
-            List of documents with embeddings
+            List of embedding vectors, one for each input text
         """
-        if not self.client:
-            logger.warning("Mistral client not initialized. Using mock embeddings for testing.")
-            return self._generate_mock_embeddings(document)
-        
-        if "chunks" not in document or not document["chunks"]:
-            logger.warning("No chunks provided for embedding generation")
+        if not texts:
+            logger.warning("Empty text list provided for embedding generation.")
             return []
         
-        # Get document base information
-        doc_id = document.get("id", "")
-        doc_metadata = document.get("metadata", {})
-        chunks = document["chunks"]
+        # Process texts in batches
+        all_embeddings = []
+        batch_start = 0
         
-        # Initialize result
-        embedded_docs = []
+        while batch_start < len(texts):
+            batch_end = min(batch_start + self.batch_size, len(texts))
+            batch_texts = texts[batch_start:batch_end]
+            
+            # Generate embeddings for the batch with retry logic
+            batch_embeddings = self._generate_batch_with_retry(batch_texts)
+            all_embeddings.extend(batch_embeddings)
+            
+            batch_start = batch_end
+            
+        logger.info(f"Generated {len(all_embeddings)} embeddings")
+        return all_embeddings
+    
+    def _generate_batch_with_retry(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for a batch of texts with retry logic.
         
-        try:
-            # Process chunks in batches
-            batch_size = 10
-            for i in range(0, len(chunks), batch_size):
-                batch = chunks[i:i + batch_size]
-                
-                # Generate embeddings for batch
-                response = self.client.embeddings(
-                    model=self.model,
-                    input=batch
+        Args:
+            texts: Batch of text chunks to embed
+            
+        Returns:
+            List of embedding vectors for the batch
+            
+        Raises:
+            Exception: If embeddings cannot be generated after max retries
+        """
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < self.max_retries:
+            try:
+                # Use the new embeddings.create API
+                response = self.client.embeddings.create(
+                    model=self.model_name,
+                    inputs=texts
                 )
                 
-                # Process response
-                for j, embedding in enumerate(response["data"]):
-                    chunk_index = i + j
-                    if chunk_index < len(chunks):
-                        chunk_text = chunks[chunk_index]
-                        
-                        # Create document with embedding
-                        doc = {
-                            "id": f"{doc_id}_{chunk_index}" if doc_id else f"chunk_{chunk_index}",
-                            "text": chunk_text,
-                            "embedding": embedding["embedding"],
-                            "metadata": {
-                                **doc_metadata,
-                                "chunk_index": chunk_index,
-                                "total_chunks": len(chunks)
-                            }
-                        }
-                        
-                        embedded_docs.append(doc)
+                # Extract and return the embedding data
+                return [item.embedding for item in response.data]
                 
-                logger.info(f"Generated embeddings for {len(batch)} chunks (batch {i//batch_size + 1})")
-            
-            logger.info(f"Generated embeddings for {len(embedded_docs)} chunks in total")
-            return embedded_docs
-            
-        except Exception as e:
-            logger.error(f"Error generating embeddings: {str(e)}")
-            logger.info("Falling back to mock embeddings for testing")
-            return self._generate_mock_embeddings(document)
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                
+                # Log the error
+                logger.warning(f"Embedding API call failed (attempt {retry_count}/{self.max_retries}): {str(e)}")
+                
+                # Exponential backoff
+                if retry_count < self.max_retries:
+                    sleep_time = self.retry_delay * (2 ** (retry_count - 1))
+                    logger.info(f"Retrying in {sleep_time:.2f} seconds...")
+                    time.sleep(sleep_time)
+        
+        # If we've exhausted retries, log and raise the error
+        logger.error(f"Embedding generation failed after {self.max_retries} attempts: {str(last_error)}")
+        raise last_error
     
-    def _generate_mock_embeddings(self, document: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def generate_query_embedding(self, query: str) -> List[float]:
         """
-        Generate mock embeddings for testing purposes.
+        Generate an embedding for a single query text.
+        
+        This is a convenience method for generating an embedding for a search query.
         
         Args:
-            document: Dictionary containing document text and chunks
+            query: Query text to embed
             
         Returns:
-            List of documents with mock embeddings
+            Embedding vector for the query
         """
-        if "chunks" not in document or not document["chunks"]:
-            logger.warning("No chunks provided for mock embedding generation")
-            return []
-            
-        # Get document base information
-        doc_id = document.get("id", "")
-        doc_metadata = document.get("metadata", {})
-        chunks = document["chunks"]
+        if not query.strip():
+            logger.warning("Empty query provided for embedding generation.")
+            return [0.0] * 1024  # Return a zero vector of the expected dimension
         
-        # Create mock embeddings
-        embedded_docs = []
-        
-        for i, chunk_text in enumerate(chunks):
-            # Create a deterministic embedding for the chunk
-            embedding = _generate_deterministic_embedding(chunk_text)
-            
-            # Create document with embedding
-            doc = {
-                "id": f"{doc_id}_{i}" if doc_id else f"chunk_{i}",
-                "text": chunk_text,
-                "embedding": embedding,
-                "metadata": {
-                    **doc_metadata,
-                    "chunk_index": i,
-                    "total_chunks": len(chunks)
-                }
-            }
-            
-            embedded_docs.append(doc)
-        
-        logger.info(f"Generated mock embeddings for {len(embedded_docs)} chunks")
-        return embedded_docs
+        embeddings = self.generate_embeddings([query])
+        return embeddings[0] if embeddings else [0.0] * 1024
+
+
+def create_embeddings_generator(
+    api_key: Optional[str] = None,
+    model_name: Optional[str] = None
+) -> EmbeddingsGenerator:
+    """
+    Create and initialize an embeddings generator (convenience function).
     
-    def embed_query(self, query: str) -> List[float]:
-        """
-        Generate embedding for a search query.
+    This function provides a simple interface for creating an EmbeddingsGenerator
+    with default settings appropriate for production use.
+    
+    Args:
+        api_key: Mistral API key
+        model_name: Name of the embedding model to use
         
-        Args:
-            query: Search query text
-            
-        Returns:
-            Embedding vector
-        """
-        if not self.client:
-            logger.warning("Mistral client not initialized. Using mock embedding for query.")
-            return _generate_deterministic_embedding(query)
-        
-        try:
-            # Generate embedding
-            response = self.client.embeddings(
-                model=self.model,
-                input=[query]
-            )
-            
-            # Extract embedding
-            embedding = response["data"][0]["embedding"]
-            
-            logger.info(f"Generated embedding for query: {query[:50]}...")
-            return embedding
-            
-        except Exception as e:
-            logger.error(f"Error generating embedding for query: {str(e)}")
-            logger.info("Falling back to mock query embedding")
-            return _generate_deterministic_embedding(query)
+    Returns:
+        Initialized EmbeddingsGenerator
+    """
+    # Use environment variables if not provided
+    api_key = api_key or os.environ.get("MISTRAL_API_KEY")
+    model_name = model_name or os.environ.get("MISTRAL_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+    
+    # Create and return the generator
+    return EmbeddingsGenerator(
+        api_key=api_key,
+        model_name=model_name
+    )
 
 if __name__ == "__main__":
     # Example usage
@@ -265,8 +242,8 @@ if __name__ == "__main__":
         }
     }
     
-    embedded_docs = generator.generate_embeddings(document)
+    embedded_docs = generator.generate_embeddings(document["text"])
     print(f"Generated embeddings for {len(embedded_docs)} chunks")
     
-    query_embedding = generator.embed_query("What is an example?")
+    query_embedding = generator.generate_query_embedding("What is an example?")
     print(f"Query embedding dimension: {len(query_embedding)}") 

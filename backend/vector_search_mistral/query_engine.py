@@ -1,12 +1,27 @@
 """
-Query Engine for PDF search.
-This module provides a high-level API for searching PDF documents.
+Query Engine for Vector Search
+-------------------------------------------------------------------------------
+This module provides the core search functionality for the vector search system.
+It integrates embedding generation with vector database querying to enable
+semantic search over document content.
+
+The query engine supports hybrid search, combining dense vector similarity
+with optional filtering and enhancement capabilities. It orchestrates the
+process of converting search queries into vector representations and retrieving
+relevant results from the vector database.
+
+Key features:
+- Semantic search using vector embeddings
+- Configurable search parameters (top-k, alpha)
+- Robust error handling
+- Support for query enhancement methods
 """
 
 import os
 import logging
 import sys
-from typing import List, Dict, Any, Optional, Tuple
+import time
+from typing import List, Dict, Any, Optional, Union, Tuple
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -18,102 +33,84 @@ from backend.vector_search_mistral.embeddings_generator import EmbeddingsGenerat
 from backend.vector_search_mistral.pinecone_indexer import PineconeIndexer
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("query_engine")
 
 # Load environment variables
 load_dotenv()
 
 class QueryEngine:
     """
-    Search engine for querying indexed PDF documents.
+    Query engine for semantic search over vectorized documents.
+    
+    This class orchestrates the process of converting search queries into
+    vector embeddings and retrieving relevant results from the vector database.
     """
     
     def __init__(
         self,
-        index_name: str = "pdf-embeddings",
-        mistral_api_key: Optional[str] = None,
-        pinecone_api_key: Optional[str] = None,
-        pinecone_region: Optional[str] = None,
-        model: str = "mistral-embed"
+        embeddings_generator: Optional[EmbeddingsGenerator] = None,
+        vector_db: Optional[PineconeIndexer] = None
     ):
         """
         Initialize the query engine.
         
         Args:
-            index_name: Name of the Pinecone index
-            mistral_api_key: Mistral API key (defaults to env var)
-            pinecone_api_key: Pinecone API key (defaults to env var)
-            pinecone_region: Pinecone environment region (defaults to env var)
-            model: Model to use for embeddings
+            embeddings_generator: Component for generating embeddings
+            vector_db: Component for vector database operations
         """
-        # Get API keys from environment variables if not provided
-        self.mistral_api_key = mistral_api_key or os.environ.get("MISTRAL_API_KEY")
-        self.pinecone_api_key = pinecone_api_key or os.environ.get("PINECONE_API_KEY")
-        self.pinecone_region = pinecone_region or os.environ.get("PINECONE_REGION")
+        self.embeddings_generator = embeddings_generator or EmbeddingsGenerator()
+        self.vector_db = vector_db or PineconeIndexer()
         
-        # Initialize embeddings generator and indexer
-        try:
-            self.embeddings_generator = EmbeddingsGenerator(api_key=self.mistral_api_key, model=model)
-            logger.info(f"Initialized EmbeddingsGenerator with model: {model}")
-        except Exception as e:
-            logger.error(f"Error initializing EmbeddingsGenerator: {str(e)}")
-            self.embeddings_generator = None
-        
-        try:
-            self.indexer = PineconeIndexer(
-                api_key=self.pinecone_api_key,
-                environment=self.pinecone_region,
-                index_name=index_name
-            )
-            logger.info(f"Initialized PineconeIndexer with index: {index_name}")
-        except Exception as e:
-            logger.error(f"Error initializing PineconeIndexer: {str(e)}")
-            self.indexer = None
+        logger.info("Initialized QueryEngine")
     
     def search(
         self,
         query: str,
         top_k: int = 5,
-        alpha: float = 0.5
+        alpha: float = 0.5,
+        filter: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Search for similar documents using hybrid search.
+        Search for documents semantically similar to the query.
+        
+        This method performs hybrid search using vector embeddings. The search
+        combines dense vector similarity with optional filtering to find
+        documents that best match the query semantically.
         
         Args:
-            query: The search query
-            top_k: Number of results to return
-            alpha: Weight for hybrid search (higher values favor semantic search)
+            query: The search query text
+            top_k: Number of results to return (default: 5)
+            alpha: Weight for semantic search (1.0 = fully semantic, default: 0.5)
+            filter: Optional metadata filters to apply to search
             
         Returns:
-            List of search results with metadata
+            List of search results, each containing text, score, and metadata
+            
+        Raises:
+            ValueError: If query is empty or invalid
         """
-        if not self.embeddings_generator or not self.indexer:
-            error_msg = "Cannot perform search: "
-            if not self.embeddings_generator:
-                error_msg += "EmbeddingsGenerator not initialized. "
-            if not self.indexer:
-                error_msg += "PineconeIndexer not initialized."
-            logger.error(error_msg)
-            return []
-        
-        logger.info(f"Searching for: '{query}' (top_k={top_k}, alpha={alpha})")
+        if not query or not query.strip():
+            raise ValueError("Search query cannot be empty")
         
         try:
-            # Generate embeddings for the query
-            query_embedding = self.embeddings_generator.embed_query(query)
+            # Generate embedding for the query
+            query_embedding = self.embeddings_generator.generate_query_embedding(query)
             
             if not query_embedding:
-                logger.error("Failed to generate embeddings for query")
+                logger.error("Failed to generate embedding for query")
                 return []
             
-            # Perform hybrid search
-            results = self.indexer.hybrid_search(
-                query=query,
-                embedding=query_embedding,
+            # Perform hybrid search with the query embedding
+            results = self.vector_db.search(
+                query_embedding=query_embedding,
                 top_k=top_k,
-                alpha=alpha
+                alpha=alpha,
+                filter=filter
             )
             
             logger.info(f"Found {len(results)} results for query: '{query}'")
@@ -123,14 +120,88 @@ class QueryEngine:
             logger.error(f"Error during search: {str(e)}")
             return []
     
-    def get_stats(self) -> Dict:
+    def is_person_query(self, query: str) -> bool:
         """
-        Get statistics about the index.
+        Determine if a query is asking about a specific person.
         
+        Args:
+            query: The search query
+            
         Returns:
-            Dictionary with index statistics
+            True if the query is about a person, False otherwise
         """
-        return self.indexer.get_stats()
+        # Person-related keywords for detection
+        person_keywords = [
+            "who is", "worked on", "projects by", "person", "employee", 
+            "staff", "personnel", "team member", "colleague", "manager",
+            "engineer", "supervisor", "lead", "director", "worked with",
+            "responsible for", "involvement", "contribution", "role of"
+        ]
+        
+        # Convert to lowercase for case-insensitive matching
+        lower_query = query.lower()
+        return any(keyword in lower_query for keyword in person_keywords)
+    
+    def extract_person_name(self, query: str) -> Optional[str]:
+        """
+        Extract a person's name from the query using simple heuristics.
+        
+        Args:
+            query: The search query
+            
+        Returns:
+            The extracted person name if found, None otherwise
+        """
+        words = query.split()
+        
+        # Look for consecutive capitalized words (likely a full name)
+        for i in range(len(words)-1):
+            if (len(words[i]) > 0 and len(words[i+1]) > 0 and 
+                words[i][0].isupper() and words[i+1][0].isupper()):
+                return f"{words[i]} {words[i+1]}"
+        
+        # Look for single capitalized words that might be names
+        for word in words:
+            if (len(word) > 2 and word[0].isupper() and 
+                word.lower() not in ["who", "what", "give", "list", "show", "tell", "find"]):
+                return word
+        
+        return None
+
+
+def create_query_engine(
+    embeddings_api_key: Optional[str] = None,
+    vector_db_api_key: Optional[str] = None,
+    vector_db_environment: Optional[str] = None
+) -> QueryEngine:
+    """
+    Create and initialize a query engine (convenience function).
+    
+    This function provides a simple interface for creating a QueryEngine
+    with the necessary components initialized with the provided API keys.
+    
+    Args:
+        embeddings_api_key: API key for the embeddings service
+        vector_db_api_key: API key for the vector database service
+        vector_db_environment: Environment for the vector database service
+        
+    Returns:
+        Initialized QueryEngine
+    """
+    # Initialize embeddings generator
+    embeddings_generator = EmbeddingsGenerator(api_key=embeddings_api_key)
+    
+    # Initialize vector database
+    vector_db = PineconeIndexer(
+        api_key=vector_db_api_key,
+        environment=vector_db_environment
+    )
+    
+    # Create and return the query engine
+    return QueryEngine(
+        embeddings_generator=embeddings_generator,
+        vector_db=vector_db
+    )
 
 
 def main():
@@ -139,7 +210,7 @@ def main():
     engine = QueryEngine()
     
     # Get index stats
-    stats = engine.get_stats()
+    stats = engine.vector_db.get_stats()
     print(f"Index stats: {stats}")
     
     # Define a test query

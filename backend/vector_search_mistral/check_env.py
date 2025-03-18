@@ -19,7 +19,7 @@ def main():
     required_vars = [
         ("MISTRAL_API_KEY", "Required for OCR text extraction and embedding generation."),
         ("PINECONE_API_KEY", "Required for vector storage and retrieval."),
-        ("PINECONE_REGION", "Required for Pinecone configuration.")
+        ("PINECONE_ENVIRONMENT", "Required for Pinecone configuration.")
     ]
     
     missing_vars = []

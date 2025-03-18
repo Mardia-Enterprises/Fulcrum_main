@@ -1,291 +1,218 @@
-# PDF Search Engine
+# PDF Vector Search Engine
 
-A powerful PDF search engine that uses Mistral OCR to extract text from PDFs, processes and chunks the text, generates dense and sparse embeddings, and indexes them in Pinecone for semantic and keyword search. Now with enhanced RAG capabilities using OpenAI.
+A production-ready PDF search engine that leverages AI technology to provide intelligent document searching capabilities. The system extracts text from PDFs, processes and chunks the content, generates semantic embeddings, and stores them in a vector database for efficient retrieval.
 
-## Features
+## Core Features
 
-- **OCR Text Extraction**: Uses Mistral AI's OCR capabilities to extract text from PDF files
-- **Text Preprocessing**: Normalizes text and intelligently chunks it with overlap for better search context
-- **Hybrid Vector Search**: Combines dense embeddings (semantic search) and sparse embeddings (keyword search) for better results
-- **Scalable Storage**: Leverages Pinecone vector database for efficient storage and retrieval
-- **Command-line Interface**: Easy-to-use CLI for processing PDFs and searching content
-- **Enhanced RAG**: Uses OpenAI to summarize, analyze, explain, or provide detailed information based on search results
-- **Person Queries**: Automatically detects queries about specific individuals and extracts their projects and roles
+- **Advanced Text Extraction**: Extracts text content from PDF documents
+- **Intelligent Text Processing**: Chunks text with contextual overlap for better search relevance
+- **Vector Embeddings**: Generates dense semantic embeddings for understanding content meaning
+- **Vector Database Storage**: Utilizes Pinecone for efficient storage and retrieval of vectors
+- **Hybrid Search**: Combines semantic and keyword search for comprehensive results
+- **Enhanced RAG**: Integrates with OpenAI to provide summarization, explanation, and detailed analysis of search results
+- **Person-Entity Intelligence**: Automatically detects and extracts information about specific individuals from documents
 
-## Installation
+## System Architecture
 
-### Automatic Setup (Recommended)
+The system consists of several interconnected components:
 
-Use the provided setup script to automatically create a virtual environment and install dependencies:
+1. **PDF Processing Layer**: Extracts and normalizes text from PDF files
+2. **Text Processing Layer**: Chunks and prepares text for embedding generation
+3. **Embedding Layer**: Converts text into vector representations
+4. **Storage Layer**: Manages vector storage and retrieval in Pinecone
+5. **Query Layer**: Handles search queries and retrieves relevant documents
+6. **Enhancement Layer**: Applies OpenAI processing to search results for enhanced information retrieval
 
-```bash
-# Make the setup script executable (if needed)
-chmod +x backend/vector_search_mistral/setup.sh
+## Production Installation
 
-# Run the setup script
-./backend/vector_search_mistral/setup.sh
-```
+### Prerequisites
 
-This script will:
-1. Create a Python virtual environment in `backend/.venv` if it doesn't exist
-2. Install all required dependencies
-3. Make the `pdf-search` script executable
-4. Create a `.env` file if it doesn't exist
-5. Create necessary directories for PDF data
+- Python 3.8+ 
+- Pinecone account (for vector database)
+- Mistral AI API key (for embedding generation)
+- OpenAI API key (for RAG features)
 
-### Manual Installation
+### Installation Steps
 
-1. Create and activate a Python virtual environment:
-
-```bash
-# Create virtual environment in backend/.venv
-python3 -m virtualenv backend/.venv
-
-# Activate the virtual environment
-source backend/.venv/bin/activate
-```
-
-2. Install dependencies:
+1. Install required packages:
 
 ```bash
-pip install -r backend/vector_search_mistral/requirements.txt
+pip install -r requirements.txt
 ```
 
-3. Set up environment variables in a `.env` file:
-
-```
-MISTRAL_API_KEY=your_mistral_api_key
-PINECONE_API_KEY=your_pinecone_api_key
-PINECONE_REGION=your_pinecone_region
-OPENAI_API_KEY=your_openai_api_key  # Only needed for RAG features
-```
-
-## Usage
-
-### Activating the Virtual Environment
-
-Before using the PDF search engine, make sure to activate the virtual environment:
+2. Set up environment variables:
 
 ```bash
-source backend/.venv/bin/activate
+# Required environment variables
+export MISTRAL_API_KEY=your_mistral_api_key
+export PINECONE_API_KEY=your_pinecone_api_key
+export PINECONE_REGION=your_pinecone_region
+export OPENAI_API_KEY=your_openai_api_key  # Only needed for RAG features
+
+# Optional environment variables
+export PINECONE_INDEX_NAME=your_index_name  # Defaults to "pdf-embeddings"
+export PINECONE_NAMESPACE=your_namespace    # Defaults to "pdf-documents"
+export MISTRAL_MODEL=your_mistral_model     # Defaults to "mistral-embed"
+export OPENAI_MODEL=your_openai_model       # Defaults to "gpt-3.5-turbo"
 ```
 
-### Using the pdf-search Script (Recommended)
-
-The easiest way to use this system is with the provided pdf-search script:
+3. Create necessary directories:
 
 ```bash
-# Process PDFs
-./backend/vector_search_mistral/pdf-search process --pdf-dir pdf_data/raw-files
-
-# Search PDFs
-./backend/vector_search_mistral/pdf-search search "your search query"
-
-# Search PDFs with RAG processing
-./backend/vector_search_mistral/pdf-search search "your search query" --rag --rag-mode explain
-
-# Find projects by a specific person
-./backend/vector_search_mistral/pdf-search search "Give me all projects that John Smith has worked on" --rag
+mkdir -p pdf_data/raw-files
 ```
 
-### Process and Index PDFs
-
-Process all PDFs in a directory and index them in Pinecone:
+4. Download NLTK data:
 
 ```bash
-./backend/vector_search_mistral/pdf-search process --pdf-dir pdf_data/raw-files
+python -m nltk.downloader punkt
+```
+
+## Production Usage
+
+### Processing PDF Documents
+
+```bash
+python run.py process --pdf-dir /path/to/pdf/files
 ```
 
 Options:
-- `--pdf-dir`: Directory containing PDF files (default: 'pdf_data/raw-files')
+- `--pdf-dir`: Directory containing PDF files to process (default: 'pdf_data/raw-files')
 - `--chunk-size`: Maximum size of text chunks in characters (default: 512)
 - `--chunk-overlap`: Overlap between consecutive chunks in characters (default: 128)
 - `--force`: Force reprocessing of all PDFs, even if already indexed
 
-### Search PDFs
+### Searching PDF Documents
 
-Search indexed PDF documents:
+#### Basic Search
 
 ```bash
-./backend/vector_search_mistral/pdf-search search "your search query"
+python run.py search "your search query"
 ```
 
 Options:
 - `--top-k`: Number of results to return (default: 5)
 - `--alpha`: Weight for hybrid search (0 = sparse only, 1 = dense only) (default: 0.5)
-- `--rag`: Enable RAG processing with OpenAI
-- `--rag-mode`: RAG processing mode when --rag is enabled (choices: summarize, analyze, explain, detail, person) (default: summarize)
-- `--model`: OpenAI model to use for RAG (default: gpt-3.5-turbo)
 
-## RAG Processing Modes
-
-When using the `--rag` flag, you can choose from different processing modes:
-
-- **summarize**: Provides a concise summary of the search results (default)
-- **analyze**: Analyzes the information and provides insights
-- **explain**: Explains the concepts mentioned in the results
-- **detail**: Provides detailed information based on the results
-- **person**: Extracts information about a specific person, including projects they've worked on
-
-The system automatically detects when you're asking about a specific person and switches to the person mode. For example:
+#### Enhanced Search with RAG
 
 ```bash
-# These queries will automatically use the person mode
-./backend/vector_search_mistral/pdf-search search "Give me all projects that Manish Mardia has worked on" --rag
-./backend/vector_search_mistral/pdf-search search "What projects has Jane Smith been involved in?" --rag
-./backend/vector_search_mistral/pdf-search search "Show me John Doe's project history" --rag
+python run.py search "your search query" --rag
 ```
 
-Example:
+Additional options for RAG:
+- `--rag-mode`: Processing mode (summarize, analyze, explain, detail, person) (default: summarize)
+- `--model`: OpenAI model to use (default: "gpt-3.5-turbo")
+- `--no-raw`: Hide source documents in output
+
+### Special Query Types
+
+#### Person Information Queries
+
+The system automatically detects queries about people and extracts relevant information:
+
 ```bash
-# Get a detailed explanation of vector search concepts
-./backend/vector_search_mistral/pdf-search search "vector search concepts" --rag --rag-mode explain
-
-# Get projects for a specific person
-./backend/vector_search_mistral/pdf-search search "Give me all projects that Manish Mardia has worked on" --rag
+python run.py search "What projects has Jane Smith worked on?" --rag
 ```
 
-## Architecture
+## API Usage
 
-The system consists of several interconnected components:
-
-1. **PDF Processor**: Extracts text from PDF files using Mistral OCR
-2. **Text Preprocessor**: Normalizes and chunks the extracted text
-3. **Embeddings Generator**: Creates dense (semantic) and sparse (keyword) embeddings for text chunks
-4. **Pinecone Indexer**: Stores and retrieves embeddings from Pinecone
-5. **Query Engine**: Provides a high-level API for searching documents
-6. **OpenAI Processor**: Enhances search results with summarization, analysis, explanations, or detailed information
-
-## Example
+The system can be integrated into other applications using its Python API:
 
 ```python
-import sys
-import os
+from vector_search_mistral.main import process_and_index_pdfs, search_pdfs
+from vector_search_mistral.openai_processor import process_rag_results
 
-# Add the project root to the Python path
-sys.path.insert(0, os.path.abspath('/path/to/your/project'))
-
-from backend.vector_search_mistral.main import process_and_index_pdfs, search_pdfs
-from backend.vector_search_mistral.openai_processor import process_rag_results
-
-# Process and index PDFs
-stats = process_and_index_pdfs(pdf_dir="path/to/pdfs")
+# Process PDFs
+stats = process_and_index_pdfs(
+    pdf_dir="/path/to/pdfs",
+    chunk_size=512,
+    chunk_overlap=128
+)
 
 # Search for documents
-results = search_pdfs("What is machine learning?")
+results = search_pdfs(
+    query="What is machine learning?",
+    top_k=5,
+    alpha=0.5
+)
 
-# Apply RAG processing with OpenAI
-rag_output = process_rag_results(
+# Enhance results with RAG processing
+enhanced_results = process_rag_results(
     query="What is machine learning?",
     search_results=results,
     mode="explain"
 )
 
-# Display the processed results
-print(rag_output["processed_result"])
-
-# Find projects for a specific person
-person_query = "Give me all projects that Manish Mardia has worked on"
-results = search_pdfs(person_query)
-person_info = process_rag_results(
-    query=person_query,
-    search_results=results,
-    mode="person"  # The system will also auto-detect this is a person query
-)
-print(person_info["processed_result"])
+# Access the processed content
+print(enhanced_results["processed_result"])
 ```
 
-## Troubleshooting
+## Performance Optimization
 
-### Virtual Environment Issues
+- **Chunk Size**: Adjust based on information density (200-500 chars for precise answers, 1000-2000 for context)
+- **Search Alpha**: Tune to balance between semantic and keyword search (0.0-1.0)
+- **RAG Modes**: Select appropriate mode based on information needs:
+  - `summarize`: For concise overviews
+  - `explain`: For educational information
+  - `analyze`: For insights and patterns
+  - `detail`: For comprehensive information
+  - `person`: For extracting information about specific individuals
 
-If you encounter errors related to missing modules or dependencies, make sure you're using the correct virtual environment:
+## Monitoring and Maintenance
 
-```bash
-# Activate the virtual environment
-source backend/.venv/bin/activate
+Logs are generated during processing and search operations. Monitor these logs for any errors or performance issues.
 
-# Verify the Python interpreter being used
-which python
+Key metrics to track:
+- Number of PDFs processed
+- Number of chunks and embeddings generated
+- Vector indexing performance
+- Search response times
+- OpenAI API usage
 
-# Install any missing dependencies
-pip install -r backend/vector_search_mistral/requirements.txt
-```
+## Error Handling
 
-### SSL Certificate Errors with NLTK
+The system includes robust error handling for common issues:
+- PDF processing failures
+- API connectivity issues
+- Vector database connection problems
+- Text chunking edge cases
+- Missing NLTK resources
 
-If you encounter SSL certificate verification errors when downloading NLTK data, the system will automatically attempt to bypass the certificate verification. If you still experience issues, you can manually download the required NLTK data:
+## Security Considerations
 
-```python
-import nltk
-import ssl
-
-try:
-    _create_unverified_https_context = ssl._create_unverified_context
-except AttributeError:
-    pass
-else:
-    ssl._create_default_https_context = _create_unverified_https_context
-
-nltk.download('punkt')
-```
-
-### Import Errors
-
-If you encounter import errors, make sure your Python path includes the project root directory:
-
-```python
-import sys
-import os
-sys.path.insert(0, os.path.abspath('/path/to/your/project'))
-```
-
-### OpenAI API Issues
-
-If you encounter errors with the OpenAI API, check:
-
-1. Your API key is correctly set in the `.env` file
-2. The OpenAI library is installed (`pip install openai>=1.0.0`)
-3. You have sufficient credits in your OpenAI account
-4. Your OpenAI API requests are not being rate limited
-
-### Person Detection Issues
-
-If the system doesn't automatically detect a person query:
-1. Make sure you're using a clear query format like "Give me all projects that [Person Name] has worked on"
-2. Explicitly specify the mode: `--rag-mode person`
-3. Check that the person's name appears in the documents with the same spelling
-
-## Performance Tuning
-
-- **Chunk Size**: Smaller chunks (200-500 chars) work better for precise answers, larger chunks (1000-2000 chars) preserve more context
-- **Alpha Parameter**: Adjust the alpha value to balance between semantic and keyword search
-  - alpha=0.0: Use only keyword search (sparse vectors)
-  - alpha=1.0: Use only semantic search (dense vectors)
-  - alpha=0.5: Equal weight to both approaches (default)
-- **RAG Mode**: Different modes are better for different use cases
-  - summarize: Best for getting a quick overview
-  - explain: Best for educational contexts
-  - analyze: Best for finding insights
-  - detail: Best for comprehensive information
-  - person: Best for finding information about specific individuals and their projects
+- API keys are stored as environment variables for security
+- Sensitive data in PDFs should be properly secured
+- Consider network security for API communications
+- Implement appropriate access controls for the search system
 
 ## Limitations
 
-- Large PDF files may take longer to process with OCR
-- Processing speed depends on Mistral API response time
-- Maximum file size for Mistral OCR API may be limited (typically 50MB)
-- NLTK download may fail due to SSL certificate issues (automatic fallback implemented)
-- OpenAI API usage incurs costs based on token consumption
-- Person detection may not work perfectly for uncommon names or ambiguous queries
+- Maximum file size constraints may apply depending on available memory
+- Processing very large PDFs may require additional resources
+- API rate limits may affect throughput for Mistral and OpenAI services
+- Enhanced RAG features incur OpenAI API costs based on token usage
 
-## Future Improvements
+## Troubleshooting
 
-- Add support for more document types (DOCX, TXT, etc.)
-- Implement document summarization
-- Add document similarity search
-- Add document filtering by metadata
-- Support for more LLMs beyond OpenAI
-- Web interface for searching and viewing results
-- Enhanced person and organization entity extraction
-- Timeline visualization for person's project history 
+### Common Issues
+
+1. **Missing API Keys**: Ensure all required API keys are set in environment variables
+2. **NLTK Data Download Failures**: Use the included workaround script or download manually
+3. **Pinecone Connection Issues**: Verify region and API key settings
+4. **PDF Extraction Problems**: Check PDF file format and encoding
+5. **OpenAI API Issues**: Monitor rate limits and API credits
+
+### Error Logging
+
+Review logs for error messages. The system logs information about:
+- PDF processing status
+- Text chunking outcomes
+- Embedding generation
+- Vector indexing
+- Search operations
+- RAG processing
+
+## License
+
+This software is proprietary and confidential. 

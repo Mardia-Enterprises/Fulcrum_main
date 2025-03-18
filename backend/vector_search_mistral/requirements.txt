@@ -1,8 +1,8 @@
 # Core dependencies
-mistralai>=0.0.7
-pinecone>=6.0.0
+mistralai>=1.5.0,<2.0.0
+pinecone>=6.0.0,<7.0.0
 # pinecone-client>=6.0.0  # Old SDK name
-openai>=1.0.0  # OpenAI API for enhanced RAG capabilities
+openai>=1.0.0,<2.0.0
 
 # PDF processing
 # PyPDF2>=1.26.0  # Uncomment if needed for basic PDF parsing
@@ -10,14 +10,20 @@ openai>=1.0.0  # OpenAI API for enhanced RAG capabilities
 # pytesseract>=0.3.7  # Uncomment if OCR is needed
 
 # Environment and utilities
-python-dotenv>=1.0.0
-numpy>=1.24.0
-nltk>=3.8.1
-tiktoken>=0.5.1
+python-dotenv>=1.0.0,<2.0.0
+numpy>=1.24.0,<2.0.0
+nltk>=3.8.1,<4.0.0
+tiktoken>=0.5.1,<0.6.0
 
 # Web and networking
 # flask>=2.0.0  # Uncomment if web server is needed
-requests>=2.31.0
+requests>=2.31.0,<3.0.0
 
 # File and path handling
-pathlib>=1.0.1 
+pathlib>=1.0.1,<2.0.0
+
+# Logging and error handling
+logging>=0.5.1.2,<0.6.0
+
+# Production requirements
+gunicorn>=21.2.0,<22.0.0  # For running as a production service 

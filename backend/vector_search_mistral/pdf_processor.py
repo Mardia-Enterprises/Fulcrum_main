@@ -1,330 +1,440 @@
 """
-PDF Processor using Mistral OCR.
-This module handles the extraction of text from PDF files using Mistral AI's OCR capabilities.
+PDF Processor for Vector Search
+-------------------------------------------------------------------------------
+This module extracts and processes text from PDF files for use in vector search.
+It provides robust functionality for converting PDF documents into processable
+text, handling various PDF formats, structures, and potential extraction issues.
+
+In production environments, this module ensures reliable text extraction with
+appropriate error handling and logging. It processes PDFs efficiently while
+maintaining document context and metadata association.
+
+Key features:
+- Production-ready PDF text extraction
+- Metadata extraction and preservation
+- Robust error handling for corrupted or complex PDFs
+- Batch processing capabilities
+- Support for various PDF formats and structures
 """
 
 import os
-import sys
 import logging
-import base64
+import sys
+import io
+import re
+import hashlib
+import time
+from typing import List, Dict, Any, Union, Optional, Tuple, BinaryIO
 from pathlib import Path
-from typing import Dict, List, Any, Optional
-import requests
-import json
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+import uuid
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("pdf_processor")
 
-# Import Mistral API client
+# Import PDF libraries with error handling
 try:
-    from mistralai.client import MistralClient
-    from mistralai.models.chat_completion import ChatMessage
+    import PyPDF2
+    PYPDF2_AVAILABLE = True
 except ImportError:
-    logger.warning("Mistral API package not found. Install with: pip install mistralai")
-    # Create stub classes to avoid errors
-    class MistralClient:
-        def __init__(self, api_key=None):
-            pass
-    
-    class ChatMessage:
-        def __init__(self, role=None, content=None):
-            self.role = role
-            self.content = content
+    logger.warning("PyPDF2 package not found. Install with: pip install PyPDF2>=3.0.0")
+    PYPDF2_AVAILABLE = False
+    PyPDF2 = None
 
-class MistralPDFProcessor:
+try:
+    from pdfminer.high_level import extract_text as pdfminer_extract_text
+    PDFMINER_AVAILABLE = True
+except ImportError:
+    logger.warning("pdfminer.six package not found. Install with: pip install pdfminer.six>=20221105")
+    PDFMINER_AVAILABLE = False
+    pdfminer_extract_text = None
+
+# Import local modules
+from .text_preprocessor import TextPreprocessor, create_text_preprocessor
+
+class PDFProcessor:
     """
-    Extract text from PDF files using Mistral AI's OCR capabilities.
+    Process PDF files for text extraction and preparation for embeddings.
+    
+    This class handles the extraction of text from PDF files, along with
+    preprocessing for embedding generation, maintaining document context
+    and metadata association.
     """
     
     def __init__(
-        self, 
-        mistral_api_key: Optional[str] = None, 
-        model: str = "mistral-large-latest"
+        self,
+        preprocessor: Optional[TextPreprocessor] = None,
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+        use_fallback: bool = True
     ):
         """
         Initialize the PDF processor.
         
         Args:
-            mistral_api_key: Mistral API key (defaults to MISTRAL_API_KEY env var)
-            model: Mistral model to use for OCR
+            preprocessor: Text preprocessor instance (created if not provided)
+            chunk_size: Maximum chunk size for text preprocessing
+            chunk_overlap: Chunk overlap for text preprocessing
+            use_fallback: Whether to use fallback extraction methods
         """
-        # Get API key from environment variables if not provided
-        self.api_key = mistral_api_key or os.environ.get("MISTRAL_API_KEY")
+        # Initialize text preprocessor if not provided
+        self.preprocessor = preprocessor or create_text_preprocessor(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
         
-        if not self.api_key:
-            logger.warning("Mistral API key not provided and not found in environment variables")
+        self.use_fallback = use_fallback
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
         
-        self.model = model
+        # Determine available PDF extraction methods
+        self.extraction_methods = []
         
-        try:
-            self.client = MistralClient(api_key=self.api_key)
-            logger.info(f"Initialized MistralPDFProcessor with model: {model}")
-        except Exception as e:
-            logger.error(f"Error initializing Mistral client: {str(e)}")
-            self.client = None
+        if PYPDF2_AVAILABLE:
+            self.extraction_methods.append("pypdf2")
+        
+        if PDFMINER_AVAILABLE:
+            self.extraction_methods.append("pdfminer")
+        
+        if not self.extraction_methods:
+            logger.error("No PDF extraction libraries available. Install PyPDF2 or pdfminer.six.")
+        else:
+            logger.info(f"PDF processor initialized with extraction methods: {', '.join(self.extraction_methods)}")
     
-    def extract_text(self, pdf_path: str) -> str:
+    def process_pdf(
+        self,
+        pdf_path: Union[str, Path],
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
-        Extract text from a PDF file using Mistral's OCR capabilities.
+        Process a PDF file for embedding generation.
+        
+        This method extracts text from a PDF file, preprocesses it, and
+        prepares it for embedding generation.
         
         Args:
             pdf_path: Path to the PDF file
+            metadata: Additional metadata to include
             
         Returns:
-            Extracted text as a string
+            Dictionary with extracted text, chunks, and metadata
+            
+        Raises:
+            FileNotFoundError: If the PDF file doesn't exist
+            ValueError: If the file is not a PDF
         """
-        pdf_path = Path(pdf_path)
+        # Convert to Path object if string
+        pdf_path = Path(pdf_path) if isinstance(pdf_path, str) else pdf_path
         
+        # Check if file exists
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
         
-        logger.info(f"Extracting text from PDF: {pdf_path.name}")
+        # Check if file is a PDF
+        if pdf_path.suffix.lower() != '.pdf':
+            raise ValueError(f"File is not a PDF: {pdf_path}")
         
-        if not self.client:
-            logger.error("Mistral client not initialized. Cannot extract text from PDF.")
-            # Return a placeholder text for testing
-            return f"[Placeholder text for {pdf_path.name}. Mistral client not initialized.]"
+        # Get file metadata
+        file_metadata = self._get_file_metadata(pdf_path)
         
-        # Since this is a test/demo, we'll skip the actual OCR and just return dummy text
-        # In a real implementation, you would use Mistral's API to extract text
-        try:
-            # Simulated extraction for testing
-            dummy_text = f"""This is placeholder text for {pdf_path.name}.
-In a real implementation, we would extract text from the PDF using Mistral's OCR capabilities.
-This text would then be processed, chunked, and embedded for vector search.
-For now, we're just using this dummy text to test the vector search functionality.
-The PDF processing pipeline includes:
-1. PDF text extraction
-2. Text preprocessing and chunking
-3. Embedding generation
-4. Vector indexing
-5. Semantic search
-
-When the system is fully functional, you'll be able to search for content within PDFs semantically,
-finding relevant information even if it doesn't exactly match your query terms.
-"""
-            logger.info(f"Successfully extracted text from {pdf_path.name} (simulated)")
-            return dummy_text
-            
-        except Exception as e:
-            logger.error(f"Error extracting text from {pdf_path.name}: {str(e)}")
-            # Return a placeholder text for testing
-            return f"[Error extracting text from {pdf_path.name}: {str(e)}]"
-    
-    def extract_text_from_pdf_with_mistral(self, pdf_path: str) -> str:
-        """
-        Extract text from a PDF file using Mistral's OCR capabilities.
-        This is the actual implementation that would be used in production.
+        # Combine with provided metadata
+        combined_metadata = {
+            **(metadata or {}),
+            **file_metadata
+        }
         
-        Args:
-            pdf_path: Path to the PDF file
-            
-        Returns:
-            Extracted text as a string
-        """
-        if not self.client:
-            logger.error("Mistral client not initialized. Cannot extract text from PDF.")
-            return ""
-            
-        pdf_path = Path(pdf_path)
+        logger.info(f"Processing PDF: {pdf_path.name}")
         
         try:
-            # Read the PDF file in binary mode
-            with open(pdf_path, "rb") as pdf_file:
-                pdf_content = pdf_file.read()
+            # Extract text from PDF
+            extracted_text = self._extract_text(pdf_path)
             
-            # Encode the PDF content as base64
-            base64_pdf = base64.b64encode(pdf_content).decode("utf-8")
-            
-            # Prepare the system message with instructions
-            system_message = """You are an OCR system that extracts text from PDFs.
-Extract ALL text from the PDF, preserving the original structure as much as possible.
-Include headings, paragraphs, tables, captions, and footnotes.
-For tables, convert them to a structured text format.
-Return ONLY the extracted text, nothing else."""
-            
-            # Create the message with the PDF attachment
-            messages = [
-                ChatMessage(role="system", content=system_message),
-                ChatMessage(
-                    role="user",
-                    content=[
-                        {
-                            "type": "text",
-                            "text": "Extract all text from this PDF document. Return only the extracted text."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:application/pdf;base64,{base64_pdf}"
-                            }
-                        }
-                    ]
-                )
-            ]
-            
-            # Call the Mistral API to extract text
-            response = self.client.chat(
-                model=self.model,
-                messages=messages,
-                max_tokens=4000
-            )
-            
-            # Extract the text from the response
-            extracted_text = response.choices[0].message.content
-            
-            logger.info(f"Successfully extracted text from {pdf_path.name} ({len(extracted_text)} characters)")
-            return extracted_text
-            
-        except Exception as e:
-            logger.error(f"Error extracting text from {pdf_path.name}: {str(e)}")
-            return ""
-    
-    def extract_text_from_pdf(self, pdf_path: str) -> Dict:
-        """
-        Extract text from a PDF file using Mistral OCR.
-        
-        Args:
-            pdf_path: Path to the PDF file
-            
-        Returns:
-            Dict containing the extracted text and metadata
-        """
-        if not os.path.exists(pdf_path):
-            logger.error(f"PDF file not found: {pdf_path}")
-            return {"error": f"File not found: {pdf_path}"}
-        
-        logger.info(f"Processing PDF: {pdf_path}")
-        
-        try:
-            # Open PDF file
-            with open(pdf_path, "rb") as pdf_file:
-                files = {"file": (os.path.basename(pdf_path), pdf_file, "application/pdf")}
-                
-                # Make API request to Mistral
-                response = requests.post(
-                    self.api_url,
-                    headers=self.headers,
-                    files=files
-                )
-                
-                # Check if request was successful
-                if response.status_code != 200:
-                    logger.error(f"Error extracting text from PDF. Status code: {response.status_code}")
-                    logger.error(f"Response: {response.text}")
-                    return {"error": f"API Error: {response.text}"}
-                
-                # Get document ID from response
-                doc_data = response.json()
-                doc_id = doc_data.get("id")
-                
-                # Retrieve the processed content
-                content = self._retrieve_processed_content(doc_id)
-                
-                # Add metadata
-                result = {
-                    "document_id": doc_id,
-                    "filename": os.path.basename(pdf_path),
-                    "content": content,
-                    "file_path": pdf_path,
+            if not extracted_text:
+                logger.warning(f"No text extracted from PDF: {pdf_path.name}")
+                return {
+                    "id": combined_metadata.get("file_id", str(uuid.uuid4())),
+                    "filename": pdf_path.name,
+                    "text": "",
+                    "chunks": [],
+                    "metadata": combined_metadata,
+                    "error": "No text extracted from PDF"
                 }
-                
-                return result
-        
+            
+            # Preprocess extracted text
+            processed_result = self.preprocessor.process_text(extracted_text, combined_metadata)
+            
+            # Add document ID if not present
+            if "id" not in processed_result:
+                processed_result["id"] = combined_metadata.get("file_id", str(uuid.uuid4()))
+            
+            # Add filename if not present
+            if "filename" not in processed_result:
+                processed_result["filename"] = pdf_path.name
+            
+            logger.info(f"Processed PDF into {len(processed_result['chunks'])} chunks: {pdf_path.name}")
+            return processed_result
+            
         except Exception as e:
-            logger.error(f"Error processing PDF {pdf_path}: {str(e)}")
-            return {"error": str(e)}
+            logger.error(f"Error processing PDF {pdf_path.name}: {str(e)}")
+            return {
+                "id": combined_metadata.get("file_id", str(uuid.uuid4())),
+                "filename": pdf_path.name,
+                "text": "",
+                "chunks": [],
+                "metadata": combined_metadata,
+                "error": str(e)
+            }
     
-    def _retrieve_processed_content(self, doc_id: str) -> Dict:
+    def process_pdf_batch(
+        self,
+        pdf_paths: List[Union[str, Path]],
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Retrieve the processed content from Mistral API.
+        Process multiple PDF files in batch mode.
         
         Args:
-            doc_id: Document ID returned by the API
+            pdf_paths: List of paths to PDF files
+            metadata: Common metadata to include for all files
             
         Returns:
-            Dict containing the processed content
+            List of processed PDF results
         """
-        retrieval_url = f"https://api.mistral.ai/v1/documents/outputs/{doc_id}"
+        results = []
         
-        try:
-            # Poll until processing is complete
-            while True:
-                response = requests.get(
-                    retrieval_url,
-                    headers=self.headers
-                )
-                
-                if response.status_code != 200:
-                    logger.error(f"Error retrieving document. Status code: {response.status_code}")
-                    logger.error(f"Response: {response.text}")
-                    return {"error": f"API Error: {response.text}"}
-                
-                data = response.json()
-                status = data.get("status")
-                
-                if status == "ready":
-                    # Document is processed
-                    return data
-                elif status == "failed":
-                    logger.error(f"Document processing failed: {data.get('error')}")
-                    return {"error": data.get("error")}
-                else:
-                    # Wait a bit before polling again
-                    import time
-                    time.sleep(2)
+        for pdf_path in pdf_paths:
+            try:
+                # Process individual PDF
+                result = self.process_pdf(pdf_path, metadata)
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Error in batch processing for {pdf_path}: {str(e)}")
+                # Add error entry
+                file_name = Path(pdf_path).name if isinstance(pdf_path, str) else pdf_path.name
+                results.append({
+                    "id": str(uuid.uuid4()),
+                    "filename": file_name,
+                    "text": "",
+                    "chunks": [],
+                    "metadata": {
+                        **(metadata or {}),
+                        "filename": file_name,
+                        "error": str(e)
+                    },
+                    "error": str(e)
+                })
         
-        except Exception as e:
-            logger.error(f"Error retrieving document content: {str(e)}")
-            return {"error": str(e)}
+        logger.info(f"Batch processed {len(results)} PDF files ({len([r for r in results if 'error' not in r])} successful)")
+        return results
     
-    def process_pdf_directory(self, directory_path: str) -> List[Dict]:
+    def process_dir(
+        self,
+        directory: Union[str, Path],
+        recursive: bool = False,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Process all PDF files in a directory.
         
         Args:
-            directory_path: Path to directory containing PDF files
+            directory: Directory containing PDF files
+            recursive: Whether to search subdirectories
+            metadata: Common metadata to include for all files
             
         Returns:
-            List of dictionaries with extracted text and metadata
+            List of processed PDF results
+            
+        Raises:
+            FileNotFoundError: If the directory doesn't exist
         """
-        if not os.path.exists(directory_path):
-            logger.error(f"Directory not found: {directory_path}")
-            return []
+        # Convert to Path object if string
+        directory = Path(directory) if isinstance(directory, str) else directory
         
-        results = []
-        for file in os.listdir(directory_path):
-            if file.lower().endswith('.pdf'):
-                pdf_path = os.path.join(directory_path, file)
-                result = self.extract_text_from_pdf(pdf_path)
-                if "error" not in result:
-                    results.append(result)
-                    logger.info(f"Successfully processed PDF: {file}")
-                else:
-                    logger.error(f"Failed to process PDF {file}: {result['error']}")
+        # Check if directory exists
+        if not directory.exists() or not directory.is_dir():
+            raise FileNotFoundError(f"Directory not found: {directory}")
         
-        logger.info(f"Processed {len(results)} PDF files from {directory_path}")
-        return results
-
-
-def main():
-    """Test the PDF processor with a sample PDF file."""
-    pdf_dir = "pdf_data/raw-files"
-    processor = MistralPDFProcessor()
-    results = processor.process_pdf_directory(pdf_dir)
+        # Get all PDF files in directory
+        if recursive:
+            pdf_paths = list(directory.glob('**/*.pdf'))
+        else:
+            pdf_paths = list(directory.glob('*.pdf'))
+        
+        logger.info(f"Found {len(pdf_paths)} PDF files in directory: {directory}")
+        
+        # Process PDFs in batch
+        return self.process_pdf_batch(pdf_paths, metadata)
     
-    # Print extracted text from first PDF for testing
-    if results:
-        first_result = results[0]
-        print(f"File: {first_result['filename']}")
-        print(f"Document ID: {first_result['document_id']}")
-        print(f"Content sample: {first_result['content']['content'][:500]}...")
+    def _extract_text(self, pdf_path: Path) -> str:
+        """
+        Extract text from a PDF file using available extraction methods.
+        
+        This method tries multiple extraction methods in order of preference
+        to ensure the best possible text extraction.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            
+        Returns:
+            Extracted text from the PDF
+            
+        Raises:
+            RuntimeError: If no extraction methods are available
+        """
+        if not self.extraction_methods:
+            raise RuntimeError("No PDF extraction libraries available")
+        
+        # Try extraction methods in order
+        extracted_text = ""
+        extraction_errors = []
+        
+        for method in self.extraction_methods:
+            try:
+                if method == "pypdf2":
+                    extracted_text = self._extract_with_pypdf2(pdf_path)
+                elif method == "pdfminer":
+                    extracted_text = self._extract_with_pdfminer(pdf_path)
+                
+                # If we got text and it's not just whitespace, return it
+                if extracted_text and extracted_text.strip():
+                    logger.info(f"Successfully extracted text using {method}: {pdf_path.name}")
+                    return extracted_text
+                
+            except Exception as e:
+                logger.warning(f"Error extracting text with {method}: {str(e)}")
+                extraction_errors.append(f"{method}: {str(e)}")
+        
+        # If we got here, all methods failed
+        logger.error(f"All extraction methods failed for {pdf_path.name}: {'; '.join(extraction_errors)}")
+        return ""
+    
+    def _extract_with_pypdf2(self, pdf_path: Path) -> str:
+        """
+        Extract text from a PDF using PyPDF2.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            
+        Returns:
+            Extracted text
+            
+        Raises:
+            ImportError: If PyPDF2 is not available
+            Exception: For any extraction errors
+        """
+        if not PYPDF2_AVAILABLE:
+            raise ImportError("PyPDF2 library not available")
+        
+        try:
+            with open(pdf_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
+                text_parts = []
+                
+                for page_num in range(len(reader.pages)):
+                    page = reader.pages[page_num]
+                    text = page.extract_text()
+                    if text:
+                        text_parts.append(text)
+                
+                return "\n\n".join(text_parts)
+                
+        except Exception as e:
+            logger.error(f"PyPDF2 extraction error for {pdf_path.name}: {str(e)}")
+            raise
+    
+    def _extract_with_pdfminer(self, pdf_path: Path) -> str:
+        """
+        Extract text from a PDF using pdfminer.six.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            
+        Returns:
+            Extracted text
+            
+        Raises:
+            ImportError: If pdfminer.six is not available
+            Exception: For any extraction errors
+        """
+        if not PDFMINER_AVAILABLE:
+            raise ImportError("pdfminer.six library not available")
+        
+        try:
+            # Extract text with pdfminer
+            return pdfminer_extract_text(str(pdf_path))
+            
+        except Exception as e:
+            logger.error(f"PDFMiner extraction error for {pdf_path.name}: {str(e)}")
+            raise
+    
+    def _get_file_metadata(self, file_path: Path) -> Dict[str, Any]:
+        """
+        Extract metadata from a file.
+        
+        This method extracts basic file metadata such as size, last modified
+        time, and generates a unique file ID based on the file path and stats.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Dictionary with file metadata
+        """
+        try:
+            stats = file_path.stat()
+            file_hash = hashlib.md5(str(file_path.absolute()).encode()).hexdigest()
+            
+            return {
+                "filename": file_path.name,
+                "file_path": str(file_path.absolute()),
+                "file_size": stats.st_size,
+                "last_modified": stats.st_mtime,
+                "file_id": file_hash
+            }
+            
+        except Exception as e:
+            logger.warning(f"Error getting file metadata for {file_path}: {str(e)}")
+            return {
+                "filename": file_path.name,
+                "file_path": str(file_path.absolute()),
+                "file_id": str(uuid.uuid4())
+            }
 
 
-if __name__ == "__main__":
-    main() 
+def create_pdf_processor(
+    chunk_size: Optional[int] = None,
+    chunk_overlap: Optional[int] = None
+) -> PDFProcessor:
+    """
+    Create and initialize a PDF processor (convenience function).
+    
+    This function provides a simple interface for creating a PDFProcessor
+    with default or custom settings for chunk size and overlap.
+    
+    Args:
+        chunk_size: Maximum chunk size for text preprocessing
+        chunk_overlap: Chunk overlap for text preprocessing
+        
+    Returns:
+        Initialized PDFProcessor
+    """
+    # Use environment variables if not provided
+    chunk_size = chunk_size or int(os.environ.get("CHUNK_SIZE", 500))
+    chunk_overlap = chunk_overlap or int(os.environ.get("CHUNK_OVERLAP", 50))
+    
+    # Create text preprocessor
+    preprocessor = create_text_preprocessor(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    )
+    
+    # Create and return PDF processor
+    return PDFProcessor(
+        preprocessor=preprocessor,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    ) 
