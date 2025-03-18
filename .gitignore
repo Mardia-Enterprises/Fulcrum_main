@@ -146,3 +146,6 @@ __pycache__/
 # Python virtual environment
 .venv/
 
+pdf_data/.DS_Store
+pdf_data/.DS_Store
+.DS_Store

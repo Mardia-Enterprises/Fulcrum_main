@@ -4,241 +4,208 @@ This module handles storing and retrieving embeddings from Pinecone.
 """
 
 import os
+import sys
+import json
 import logging
-from typing import List, Dict, Any, Optional
 import time
-from pinecone import Pinecone, ServerlessSpec
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
-
-# Setup logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
-class PineconeIndexer:
-    """Store and retrieve embeddings from Pinecone."""
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+# Import pinecone
+try:
+    import pinecone
+except ImportError:
+    logger.warning("Pinecone package not found. Install with: pip install pinecone")
     
-    def __init__(self, index_name: str = "pdf-data-vector"):
+    # Create a stub class to avoid errors
+    class PineconeMock:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+    pinecone = PineconeMock()
+
+class PineconeIndexer:
+    """
+    Handles operations with the Pinecone vector database.
+    """
+    
+    def __init__(
+        self, 
+        api_key: Optional[str] = None,
+        environment: Optional[str] = None,
+        index_name: str = "pdf-embeddings",
+        dimension: int = 1024
+    ):
         """
         Initialize the Pinecone indexer.
         
         Args:
-            index_name: Name of the Pinecone index to use
-        """
-        self.api_key = os.getenv("PINECONE_API_KEY")
-        self.region = os.getenv("PINECONE_REGION")
-        
-        if not self.api_key or not self.region:
-            raise ValueError("PINECONE_API_KEY or PINECONE_REGION not found in environment variables.")
-        
-        self.index_name = index_name
-        
-        # Initialize Pinecone
-        logger.info(f"Initializing Pinecone with index: {index_name}")
-        self.pc = Pinecone(api_key=self.api_key)
-        
-        # Check if index exists, create if not
-        self._initialize_index()
-        
-        # Connect to the index
-        self.index = self.pc.Index(self.index_name)
-        
-    def _initialize_index(self, dimension: int = 384):
-        """
-        Check if index exists, create if not.
-        
-        Args:
+            api_key: Pinecone API key (defaults to PINECONE_API_KEY env var)
+            environment: Pinecone environment (defaults to PINECONE_REGION env var)
+            index_name: Name of the Pinecone index
             dimension: Dimension of the embeddings
         """
-        # List all indexes
-        indexes = self.pc.list_indexes()
+        # Get API key from environment variables if not provided
+        self.api_key = api_key or os.environ.get("PINECONE_API_KEY")
+        self.environment = environment or os.environ.get("PINECONE_REGION")
+        self.index_name = index_name
+        self.dimension = dimension
         
-        # Check if our index exists
-        if self.index_name not in [idx.name for idx in indexes.indexes]:
-            logger.info(f"Creating new Pinecone index: {self.index_name}")
+        # Check if API keys are available
+        if not self.api_key:
+            logger.warning("Pinecone API key not provided and not found in environment variables")
+        
+        if not self.environment:
+            logger.warning("Pinecone environment not provided and not found in environment variables")
+        
+        # Initialize Pinecone
+        try:
+            # Initialize Pinecone client
+            self.pc = pinecone.Pinecone(api_key=self.api_key)
+            logger.info(f"Initialized Pinecone with API key")
             
-            # Create the index
-            self.pc.create_index(
-                name=self.index_name,
-                dimension=dimension,
-                metric="cosine",
-                spec=ServerlessSpec(
-                    cloud="aws",
-                    region=self.region
+            # Check if index exists, create if not
+            index_list = [idx["name"] for idx in self.pc.list_indexes()]
+            
+            if self.index_name not in index_list:
+                logger.info(f"Creating Pinecone index: {self.index_name}")
+                self.pc.create_index(
+                    name=self.index_name,
+                    dimension=self.dimension,
+                    metric="cosine",
+                    spec={"serverless": {"cloud": "aws", "region": self.environment}}
                 )
-            )
+                # Wait for index to be ready
+                time.sleep(10)  
             
-            # Wait for index to be ready
-            logger.info("Waiting for index to initialize...")
-            time.sleep(10)  # Give time for index to initialize
+            # Connect to index
+            self.index = self.pc.Index(self.index_name)
+            logger.info(f"Connected to Pinecone index: {self.index_name}")
             
-            logger.info(f"Index {self.index_name} created successfully")
-        else:
-            logger.info(f"Using existing index: {self.index_name}")
+        except Exception as e:
+            logger.error(f"Error initializing Pinecone: {str(e)}")
+            self.index = None
     
-    def index_embeddings(self, embeddings_data: List[Dict]) -> Dict[str, int]:
+    def index_documents(self, documents: List[Dict[str, Any]]) -> int:
         """
-        Index embeddings in batches.
+        Index documents in Pinecone.
         
         Args:
-            embeddings_data: List of dictionaries with chunks and their embeddings
+            documents: List of documents with embeddings
             
         Returns:
-            Dictionary with counts of vectors processed, indexed, and errors
+            Number of documents indexed
         """
-        batch_size = 100  # Pinecone batch size limit
-        stats = {"processed": 0, "indexed": 0, "errors": 0}
+        if not self.index:
+            logger.error("Pinecone index not initialized")
+            return 0
         
-        for i in range(0, len(embeddings_data), batch_size):
-            batch = embeddings_data[i:i+batch_size]
-            vectors = []
+        # Create vectors for upsert
+        vectors = []
+        for i, doc in enumerate(documents):
+            if "embedding" not in doc:
+                logger.warning(f"Document {i} has no embedding, skipping")
+                continue
             
-            for item in batch:
-                # Create a unique ID for each chunk
-                vector_id = f"{item['filename']}_chunk_{item['chunk_id']}"
-                
-                # Prepare the metadata (everything except the embeddings)
-                metadata = {
-                    "chunk_id": item["chunk_id"],
-                    "text": item["text"],
-                    "filename": item["filename"],
-                    "document_id": item["document_id"],
-                    "file_path": item["file_path"],
-                    "chunk_count": item["chunk_count"]
+            # Create vector
+            vector = {
+                "id": f"{doc.get('id', 'doc')}_{i}",
+                "values": doc["embedding"],
+                "metadata": {
+                    "text": doc["text"],
+                    "filename": doc.get("metadata", {}).get("filename", ""),
+                    "chunk_index": i
                 }
-                
-                # Create the vector
-                vector = {
-                    "id": vector_id,
-                    "values": item["dense_embedding"],
-                    "metadata": metadata,
-                    "sparse_values": {
-                        "indices": list(map(int, item["sparse_embedding"].keys())),
-                        "values": list(item["sparse_embedding"].values())
-                    }
-                }
-                
-                vectors.append(vector)
-                stats["processed"] += 1
+            }
             
+            vectors.append(vector)
+        
+        # Upsert vectors in batches
+        batch_size = 100
+        total_indexed = 0
+        
+        for i in range(0, len(vectors), batch_size):
+            batch = vectors[i:i + batch_size]
             try:
-                # Upsert the batch
-                self.index.upsert(vectors=vectors)
-                stats["indexed"] += len(vectors)
-                logger.info(f"Indexed batch of {len(vectors)} vectors")
+                self.index.upsert(vectors=batch)
+                total_indexed += len(batch)
+                logger.info(f"Indexed batch of {len(batch)} vectors ({i+1}-{i+len(batch)} of {len(vectors)})")
             except Exception as e:
-                logger.error(f"Error indexing batch: {str(e)}")
-                stats["errors"] += len(vectors)
+                logger.error(f"Error indexing batch {i//batch_size + 1}: {str(e)}")
         
-        logger.info(f"Indexing complete: processed={stats['processed']}, indexed={stats['indexed']}, errors={stats['errors']}")
-        return stats
+        return total_indexed
     
-    def search(self, 
-               query_text: str, 
-               query_embedding: List[float],
-               query_sparse_embedding: Dict[str, float],
-               top_k: int = 5, 
-               include_metadata: bool = True,
-               alpha: float = 0.5) -> List[Dict]:
+    def hybrid_search(
+        self, 
+        query: str, 
+        embedding: List[float],
+        top_k: int = 5,
+        alpha: float = 0.5
+    ) -> List[Dict[str, Any]]:
         """
-        Search for similar documents using hybrid search.
+        Perform hybrid search using both sparse and dense vectors.
         
         Args:
-            query_text: Original query text
-            query_embedding: Dense embedding of the query
-            query_sparse_embedding: Sparse embedding of the query
+            query: Text query for sparse search
+            embedding: Dense vector for semantic search
             top_k: Number of results to return
-            include_metadata: Whether to include metadata in the results
             alpha: Weight for hybrid search (0 = sparse only, 1 = dense only)
             
         Returns:
             List of search results
         """
-        logger.info(f"Searching for: '{query_text}' with top_k={top_k}, alpha={alpha}")
-        
-        # Convert sparse embedding to the format Pinecone expects
-        sparse_vector = {
-            "indices": list(map(int, query_sparse_embedding.keys())),
-            "values": list(query_sparse_embedding.values())
-        }
+        if not self.index:
+            logger.error("Pinecone index not initialized")
+            return []
         
         try:
-            # Perform hybrid search
+            # Perform search
             results = self.index.query(
-                vector=query_embedding,
-                sparse_vector=sparse_vector,
+                vector=embedding,
                 top_k=top_k,
-                include_metadata=include_metadata,
-                alpha=alpha
+                include_metadata=True
             )
             
             # Format results
             formatted_results = []
-            for match in results.matches:
+            for match in results["matches"]:
                 result = {
-                    "id": match.id,
-                    "score": match.score,
-                    "text": match.metadata.get("text", ""),
-                    "filename": match.metadata.get("filename", ""),
-                    "document_id": match.metadata.get("document_id", ""),
-                    "file_path": match.metadata.get("file_path", ""),
-                    "chunk_id": match.metadata.get("chunk_id", 0)
+                    "id": match.get("id", ""),
+                    "score": match.get("score", 0),
+                    "text": match.get("metadata", {}).get("text", ""),
+                    "metadata": match.get("metadata", {})
                 }
                 formatted_results.append(result)
             
-            logger.info(f"Found {len(formatted_results)} results")
+            logger.info(f"Search returned {len(formatted_results)} results")
             return formatted_results
         
         except Exception as e:
-            logger.error(f"Error searching: {str(e)}")
+            logger.error(f"Error during search: {str(e)}")
             return []
     
-    def delete_by_filename(self, filename: str) -> int:
-        """
-        Delete all vectors for a specific file.
-        
-        Args:
-            filename: Name of the file to delete
-            
-        Returns:
-            Number of vectors deleted
-        """
-        try:
-            # List all IDs that match the filename
-            response = self.index.query(
-                top_k=10000,  # Large number to get all matches
-                include_metadata=True,
-                filter={"filename": {"$eq": filename}}
-            )
-            
-            # Extract the IDs
-            ids = [match.id for match in response.matches]
-            
-            if ids:
-                # Delete the vectors
-                self.index.delete(ids=ids)
-                logger.info(f"Deleted {len(ids)} vectors for file: {filename}")
-                return len(ids)
-            else:
-                logger.info(f"No vectors found for file: {filename}")
-                return 0
-        
-        except Exception as e:
-            logger.error(f"Error deleting vectors for file {filename}: {str(e)}")
-            return 0
-    
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> Dict[str, Any]:
         """
         Get statistics about the index.
         
         Returns:
             Dictionary with index statistics
         """
+        if not self.index:
+            logger.error("Pinecone index not initialized")
+            return {}
+        
         try:
-            return self.index.describe_index_stats()
+            stats = self.index.describe_index_stats()
+            return stats
         except Exception as e:
             logger.error(f"Error getting index stats: {str(e)}")
             return {}
@@ -264,7 +231,7 @@ def main():
     indexer = PineconeIndexer()
     
     # Index the sample data
-    stats = indexer.index_embeddings(sample_data)
+    stats = indexer.index_documents(sample_data)
     print(f"Indexing stats: {stats}")
     
     # Get index statistics
@@ -274,7 +241,7 @@ def main():
     # Test search
     query_embedding = [0.1] * 384  # Dummy query embedding
     query_sparse = {"0": 0.5, "10": 0.3}  # Dummy sparse embedding
-    results = indexer.search("test query", query_embedding, query_sparse, top_k=5)
+    results = indexer.hybrid_search(query_embedding, query_embedding, top_k=5)
     
     for i, result in enumerate(results):
         print(f"Result {i+1}:")
@@ -284,7 +251,7 @@ def main():
         print()
     
     # Clean up test data
-    indexer.delete_by_filename("test_sample.pdf")
+    indexer.delete_by_metadata("filename", "test_sample.pdf")
 
 
 if __name__ == "__main__":

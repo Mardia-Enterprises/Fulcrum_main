@@ -1,6 +1,6 @@
 # PDF Search Engine
 
-A powerful PDF search engine that uses Mistral OCR to extract text from PDFs, processes and chunks the text, generates dense and sparse embeddings, and indexes them in Pinecone for semantic and keyword search.
+A powerful PDF search engine that uses Mistral OCR to extract text from PDFs, processes and chunks the text, generates dense and sparse embeddings, and indexes them in Pinecone for semantic and keyword search. Now with enhanced RAG capabilities using OpenAI.
 
 ## Features
 
@@ -9,31 +9,87 @@ A powerful PDF search engine that uses Mistral OCR to extract text from PDFs, pr
 - **Hybrid Vector Search**: Combines dense embeddings (semantic search) and sparse embeddings (keyword search) for better results
 - **Scalable Storage**: Leverages Pinecone vector database for efficient storage and retrieval
 - **Command-line Interface**: Easy-to-use CLI for processing PDFs and searching content
+- **Enhanced RAG**: Uses OpenAI to summarize, analyze, explain, or provide detailed information based on search results
 
 ## Installation
 
-1. Install dependencies:
+### Automatic Setup (Recommended)
+
+Use the provided setup script to automatically create a virtual environment and install dependencies:
 
 ```bash
-pip install -r requirements.txt
+# Make the setup script executable (if needed)
+chmod +x backend/vector_search_mistral/setup.sh
+
+# Run the setup script
+./backend/vector_search_mistral/setup.sh
 ```
 
-2. Set up environment variables in a `.env` file:
+This script will:
+1. Create a Python virtual environment in `backend/.venv` if it doesn't exist
+2. Install all required dependencies
+3. Make the `pdf-search` script executable
+4. Create a `.env` file if it doesn't exist
+5. Create necessary directories for PDF data
+
+### Manual Installation
+
+1. Create and activate a Python virtual environment:
+
+```bash
+# Create virtual environment in backend/.venv
+python3 -m virtualenv backend/.venv
+
+# Activate the virtual environment
+source backend/.venv/bin/activate
+```
+
+2. Install dependencies:
+
+```bash
+pip install -r backend/vector_search_mistral/requirements.txt
+```
+
+3. Set up environment variables in a `.env` file:
 
 ```
 MISTRAL_API_KEY=your_mistral_api_key
 PINECONE_API_KEY=your_pinecone_api_key
 PINECONE_REGION=your_pinecone_region
+OPENAI_API_KEY=your_openai_api_key  # Only needed for RAG features
 ```
 
 ## Usage
+
+### Activating the Virtual Environment
+
+Before using the PDF search engine, make sure to activate the virtual environment:
+
+```bash
+source backend/.venv/bin/activate
+```
+
+### Using the pdf-search Script (Recommended)
+
+The easiest way to use this system is with the provided pdf-search script:
+
+```bash
+# Process PDFs
+./backend/vector_search_mistral/pdf-search process --pdf-dir pdf_data/raw-files
+
+# Search PDFs
+./backend/vector_search_mistral/pdf-search search "your search query"
+
+# Search PDFs with RAG processing
+./backend/vector_search_mistral/pdf-search search "your search query" --rag --rag-mode explain
+```
 
 ### Process and Index PDFs
 
 Process all PDFs in a directory and index them in Pinecone:
 
 ```bash
-python -m main process --pdf-dir pdf_data/raw-files
+./backend/vector_search_mistral/pdf-search process --pdf-dir pdf_data/raw-files
 ```
 
 Options:
@@ -47,12 +103,30 @@ Options:
 Search indexed PDF documents:
 
 ```bash
-python -m main search "your search query"
+./backend/vector_search_mistral/pdf-search search "your search query"
 ```
 
 Options:
 - `--top-k`: Number of results to return (default: 5)
 - `--alpha`: Weight for hybrid search (0 = sparse only, 1 = dense only) (default: 0.5)
+- `--rag`: Enable RAG processing with OpenAI
+- `--rag-mode`: RAG processing mode when --rag is enabled (choices: summarize, analyze, explain, detail) (default: summarize)
+- `--model`: OpenAI model to use for RAG (default: gpt-3.5-turbo)
+
+## RAG Processing Modes
+
+When using the `--rag` flag, you can choose from different processing modes:
+
+- **summarize**: Provides a concise summary of the search results (default)
+- **analyze**: Analyzes the information and provides insights
+- **explain**: Explains the concepts mentioned in the results
+- **detail**: Provides detailed information based on the results
+
+Example:
+```bash
+# Get a detailed explanation of vector search concepts
+./backend/vector_search_mistral/pdf-search search "vector search concepts" --rag --rag-mode explain
+```
 
 ## Architecture
 
@@ -63,11 +137,19 @@ The system consists of several interconnected components:
 3. **Embeddings Generator**: Creates dense (semantic) and sparse (keyword) embeddings for text chunks
 4. **Pinecone Indexer**: Stores and retrieves embeddings from Pinecone
 5. **Query Engine**: Provides a high-level API for searching documents
+6. **OpenAI Processor**: Enhances search results with summarization, analysis, explanations, or detailed information
 
 ## Example
 
 ```python
-from vector_search_mistral import process_and_index_pdfs, search_pdfs
+import sys
+import os
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.abspath('/path/to/your/project'))
+
+from backend.vector_search_mistral.main import process_and_index_pdfs, search_pdfs
+from backend.vector_search_mistral.openai_processor import process_rag_results
 
 # Process and index PDFs
 stats = process_and_index_pdfs(pdf_dir="path/to/pdfs")
@@ -75,13 +157,70 @@ stats = process_and_index_pdfs(pdf_dir="path/to/pdfs")
 # Search for documents
 results = search_pdfs("What is machine learning?")
 
-# Display results
-for result in results:
-    print(f"Document: {result['filename']}")
-    print(f"Score: {result['score']}")
-    for match in result['text_matches']:
-        print(f"- {match['text'][:100]}...")
+# Apply RAG processing with OpenAI
+rag_output = process_rag_results(
+    query="What is machine learning?",
+    search_results=results,
+    mode="explain"
+)
+
+# Display the processed results
+print(rag_output["processed_result"])
 ```
+
+## Troubleshooting
+
+### Virtual Environment Issues
+
+If you encounter errors related to missing modules or dependencies, make sure you're using the correct virtual environment:
+
+```bash
+# Activate the virtual environment
+source backend/.venv/bin/activate
+
+# Verify the Python interpreter being used
+which python
+
+# Install any missing dependencies
+pip install -r backend/vector_search_mistral/requirements.txt
+```
+
+### SSL Certificate Errors with NLTK
+
+If you encounter SSL certificate verification errors when downloading NLTK data, the system will automatically attempt to bypass the certificate verification. If you still experience issues, you can manually download the required NLTK data:
+
+```python
+import nltk
+import ssl
+
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+nltk.download('punkt')
+```
+
+### Import Errors
+
+If you encounter import errors, make sure your Python path includes the project root directory:
+
+```python
+import sys
+import os
+sys.path.insert(0, os.path.abspath('/path/to/your/project'))
+```
+
+### OpenAI API Issues
+
+If you encounter errors with the OpenAI API, check:
+
+1. Your API key is correctly set in the `.env` file
+2. The OpenAI library is installed (`pip install openai>=1.0.0`)
+3. You have sufficient credits in your OpenAI account
+4. Your OpenAI API requests are not being rate limited
 
 ## Performance Tuning
 
@@ -90,16 +229,25 @@ for result in results:
   - alpha=0.0: Use only keyword search (sparse vectors)
   - alpha=1.0: Use only semantic search (dense vectors)
   - alpha=0.5: Equal weight to both approaches (default)
+- **RAG Mode**: Different modes are better for different use cases
+  - summarize: Best for getting a quick overview
+  - explain: Best for educational contexts
+  - analyze: Best for finding insights
+  - detail: Best for comprehensive information
 
 ## Limitations
 
 - Large PDF files may take longer to process with OCR
 - Processing speed depends on Mistral API response time
-- Maximum file size for Mistral OCR API may be limited
+- Maximum file size for Mistral OCR API may be limited (typically 50MB)
+- NLTK download may fail due to SSL certificate issues (automatic fallback implemented)
+- OpenAI API usage incurs costs based on token consumption
 
 ## Future Improvements
 
 - Add support for more document types (DOCX, TXT, etc.)
 - Implement document summarization
 - Add document similarity search
-- Add document filtering by metadata 
+- Add document filtering by metadata
+- Support for more LLMs beyond OpenAI
+- Web interface for searching and viewing results 

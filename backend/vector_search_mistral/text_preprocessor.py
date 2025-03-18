@@ -6,25 +6,54 @@ This module handles text preprocessing, chunking, and normalization for the extr
 import re
 import logging
 import nltk
-from typing import List, Dict, Any, Optional
-from nltk.tokenize import sent_tokenize
+import ssl
+import os
+import sys
+import uuid
+import string
+from typing import List, Dict, Any, Optional, Tuple
+from pathlib import Path
+from dotenv import load_dotenv
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Download NLTK data for sentence tokenization
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
+# Define a simple sentence tokenizer function
+def simple_sentence_tokenizer(text):
+    """Simple sentence tokenizer that splits on period, exclamation, and question marks"""
+    return re.split(r'(?<=[.!?])\s+', text)
 
+# Import NLTK
+try:
+    import nltk
+    from nltk.tokenize import sent_tokenize
+    
+    # Check if punkt tokenizer is available
+    try:
+        nltk.data.find('tokenizers/punkt')
+        logger.info("Using NLTK punkt tokenizer")
+    except LookupError:
+        # Fall back to simple tokenizer
+        logger.warning("NLTK punkt tokenizer not found, using simple tokenizer")
+        sent_tokenize = simple_sentence_tokenizer
+except ImportError:
+    logger.warning("NLTK package not found, using simple sentence tokenizer")
+    sent_tokenize = simple_sentence_tokenizer
 
 class TextPreprocessor:
-    """Preprocess text extracted from PDF documents."""
+    """
+    Preprocesses text for embedding generation.
+    """
     
-    def __init__(self, chunk_size: int = 512, chunk_overlap: int = 128):
+    def __init__(
+        self, 
+        chunk_size: int = 512, 
+        chunk_overlap: int = 128
+    ):
         """
         Initialize the text preprocessor.
         
@@ -34,161 +63,170 @@ class TextPreprocessor:
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        logger.info(f"Initialized TextPreprocessor with chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
     
-    def normalize_text(self, text: str) -> str:
+    def process_text(self, text: str) -> List[str]:
         """
-        Normalize text by converting to lowercase, removing extra whitespace, etc.
+        Process text by cleaning and splitting it into chunks.
         
         Args:
-            text: Input text to normalize
-            
-        Returns:
-            Normalized text
-        """
-        # Convert to lowercase
-        text = text.lower()
-        
-        # Replace multiple whitespace with single space
-        text = re.sub(r'\s+', ' ', text)
-        
-        # Remove special characters and numbers if needed
-        # text = re.sub(r'[^a-z\s]', '', text)  # Uncomment to remove all non-alphabetic characters
-        
-        # Strip leading/trailing whitespace
-        text = text.strip()
-        
-        return text
-    
-    def chunk_text(self, text: str) -> List[str]:
-        """
-        Split text into chunks with specified size and overlap.
-        
-        Args:
-            text: Input text to split into chunks
+            text: Input text to process
             
         Returns:
             List of text chunks
         """
-        # If text is shorter than chunk size, return as single chunk
-        if len(text) <= self.chunk_size:
-            return [text]
+        # Clean text
+        cleaned_text = self._clean_text(text)
         
-        # Split into sentences first for more natural chunk boundaries
-        sentences = sent_tokenize(text)
-        chunks = []
-        current_chunk = ""
+        # Split text into chunks
+        chunks = self._split_text(cleaned_text)
         
-        for sentence in sentences:
-            # If adding this sentence would exceed chunk size, 
-            # add current chunk to results and start a new chunk
-            if len(current_chunk) + len(sentence) > self.chunk_size and current_chunk:
-                chunks.append(current_chunk.strip())
-                # Start new chunk with overlap from previous chunk
-                if len(current_chunk) > self.chunk_overlap:
-                    # Use the last part of the previous chunk as overlap
-                    current_chunk = current_chunk[-self.chunk_overlap:] + " " + sentence
-                else:
-                    current_chunk = sentence
-            else:
-                # Add sentence to current chunk
-                if current_chunk:
-                    current_chunk += " " + sentence
-                else:
-                    current_chunk = sentence
-        
-        # Add the last chunk if it's not empty
-        if current_chunk.strip():
-            chunks.append(current_chunk.strip())
-        
+        logger.info(f"Split text into {len(chunks)} chunks")
         return chunks
     
-    def preprocess_document(self, document: Dict) -> List[Dict]:
+    def _clean_text(self, text: str) -> str:
         """
-        Preprocess a document by extracting text, normalizing, and chunking.
+        Clean text by removing extra whitespace and special characters.
         
         Args:
-            document: Document dictionary from PDF processor
+            text: Input text to clean
             
         Returns:
-            List of dictionaries, each containing a text chunk and metadata
+            Cleaned text
         """
+        # Remove extra whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Remove special characters
+        text = re.sub(r'[^\w\s.,;:!?"\'-]', ' ', text)
+        
+        return text
+    
+    def _split_text(self, text: str) -> List[str]:
+        """
+        Split text into chunks of approximately equal size.
+        
+        Args:
+            text: Input text to split
+            
+        Returns:
+            List of text chunks
+        """
+        # If text is short enough, return as a single chunk
+        if len(text) <= self.chunk_size:
+            return [text]
+            
+        # Split text into sentences
         try:
-            # Extract text from the document
-            if 'content' not in document or 'content' not in document['content']:
-                logger.error(f"Invalid document format: {document.get('filename', 'Unknown')}")
-                return []
-            
-            text = document['content']['content']
-            
-            # Normalize text
-            normalized_text = self.normalize_text(text)
-            
-            # Chunk the text
-            chunks = self.chunk_text(normalized_text)
-            
-            # Create result list with chunks and metadata
-            result = []
-            for i, chunk in enumerate(chunks):
-                result.append({
-                    "chunk_id": i,
-                    "text": chunk,
-                    "filename": document.get("filename", "Unknown"),
-                    "document_id": document.get("document_id", "Unknown"),
-                    "file_path": document.get("file_path", "Unknown"),
-                    "chunk_count": len(chunks)
-                })
-            
-            logger.info(f"Created {len(chunks)} chunks for document: {document.get('filename', 'Unknown')}")
-            return result
-        
+            sentences = sent_tokenize(text)
         except Exception as e:
-            logger.error(f"Error preprocessing document: {str(e)}")
-            return []
-    
-    def preprocess_documents(self, documents: List[Dict]) -> List[Dict]:
-        """
-        Preprocess multiple documents.
+            logger.error(f"Error splitting text into sentences: {str(e)}")
+            # Fall back to simple split by periods
+            sentences = text.split('. ')
+            sentences = [s + '.' for s in sentences[:-1]] + [sentences[-1]]
         
-        Args:
-            documents: List of document dictionaries from PDF processor
+        # Initialize variables
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        # Process each sentence
+        for sentence in sentences:
+            sentence = sentence.strip()
+            sentence_length = len(sentence)
             
-        Returns:
-            List of dictionaries, each containing a text chunk and metadata
-        """
-        all_chunks = []
-        for document in documents:
-            document_chunks = self.preprocess_document(document)
-            all_chunks.extend(document_chunks)
+            # Skip empty sentences
+            if sentence_length == 0:
+                continue
+            
+            # If the sentence is longer than the chunk size, split it further
+            if sentence_length > self.chunk_size:
+                # If we have content in the current chunk, add it to chunks
+                if current_length > 0:
+                    chunks.append(' '.join(current_chunk))
+                    current_chunk = []
+                    current_length = 0
+                
+                # Split long sentence into smaller pieces
+                words = sentence.split()
+                current_piece = []
+                current_piece_length = 0
+                
+                for word in words:
+                    word_length = len(word) + 1  # +1 for the space
+                    
+                    if current_piece_length + word_length <= self.chunk_size:
+                        current_piece.append(word)
+                        current_piece_length += word_length
+                    else:
+                        chunks.append(' '.join(current_piece))
+                        current_piece = [word]
+                        current_piece_length = word_length
+                
+                # Add any remaining piece
+                if current_piece:
+                    chunks.append(' '.join(current_piece))
+                
+            # If adding the sentence to the current chunk would exceed the chunk size,
+            # start a new chunk
+            elif current_length + sentence_length + 1 > self.chunk_size:  # +1 for space
+                # Add the current chunk to the list of chunks
+                chunks.append(' '.join(current_chunk))
+                
+                # Start a new chunk with overlap
+                overlap_size = min(self.chunk_overlap, current_length)
+                if overlap_size > 0:
+                    # Calculate how many sentences to keep for overlap
+                    overlap_length = 0
+                    overlap_sentences = []
+                    
+                    for i in range(len(current_chunk) - 1, -1, -1):
+                        overlap_sent = current_chunk[i]
+                        overlap_sent_length = len(overlap_sent) + 1  # +1 for space
+                        
+                        if overlap_length + overlap_sent_length <= self.chunk_overlap:
+                            overlap_sentences.insert(0, overlap_sent)
+                            overlap_length += overlap_sent_length
+                        else:
+                            break
+                    
+                    current_chunk = overlap_sentences
+                    current_length = overlap_length
+                else:
+                    current_chunk = []
+                    current_length = 0
+                
+                # Add the current sentence
+                current_chunk.append(sentence)
+                current_length += sentence_length + 1  # +1 for space
+            
+            # Otherwise, add the sentence to the current chunk
+            else:
+                current_chunk.append(sentence)
+                current_length += sentence_length + 1  # +1 for space
         
-        logger.info(f"Created a total of {len(all_chunks)} chunks from {len(documents)} documents")
-        return all_chunks
-
-
-def main():
-    """Test the text preprocessor with a sample text."""
-    sample_text = """
-    This is a sample text for testing the text preprocessor.
-    It contains multiple sentences that should be split into chunks.
-    Each chunk should have a maximum size and some overlap with the next chunk.
-    The preprocessor should also normalize the text by converting it to lowercase and removing extra whitespace.
-    This helps improve the quality of embeddings and search results.
-    Let's add more sentences to make this text longer and force it to be split into multiple chunks.
-    Chunking is important for large documents as it allows us to process and search them more effectively.
-    Each chunk can be independently vectorized and indexed for efficient retrieval.
-    This approach is commonly used in RAG (Retrieval Augmented Generation) systems.
-    """
-    
-    processor = TextPreprocessor(chunk_size=200, chunk_overlap=50)
-    
-    # Test normalization
-    normalized = processor.normalize_text(sample_text)
-    print(f"Normalized text (sample): {normalized[:100]}...")
-    
-    # Test chunking
-    chunks = processor.chunk_text(normalized)
-    for i, chunk in enumerate(chunks):
-        print(f"Chunk {i+1}/{len(chunks)}: {chunk[:50]}...")
-
+        # Add the last chunk if it has content
+        if current_chunk:
+            chunks.append(' '.join(current_chunk))
+        
+        # If we ended up with no chunks (unlikely), return the original text as a single chunk
+        if not chunks:
+            return [text]
+            
+        return chunks
 
 if __name__ == "__main__":
-    main() 
+    # Example usage
+    example_text = """
+    This is a sample text for testing the TextPreprocessor class. 
+    It contains multiple sentences. Each sentence will be processed.
+    Some sentences are short. Others are much longer and contain more information that needs to be processed carefully.
+    The TextPreprocessor class should handle all of these cases correctly.
+    """
+    
+    preprocessor = TextPreprocessor(chunk_size=100, chunk_overlap=20)
+    chunks = preprocessor.process_text(example_text)
+    
+    print(f"Split into {len(chunks)} chunks:")
+    for i, chunk in enumerate(chunks):
+        print(f"Chunk {i+1} ({len(chunk)} chars): {chunk}") 

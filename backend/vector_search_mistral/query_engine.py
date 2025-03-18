@@ -5,11 +5,17 @@ This module provides a high-level API for searching PDF documents.
 
 import os
 import logging
+import sys
 from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
+from pathlib import Path
 
-from .embeddings_generator import EmbeddingsGenerator
-from .pinecone_indexer import PineconeIndexer
+# Add the parent directory to the Python path to enable absolute imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+# Use absolute imports instead of relative imports
+from backend.vector_search_mistral.embeddings_generator import EmbeddingsGenerator
+from backend.vector_search_mistral.pinecone_indexer import PineconeIndexer
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
@@ -20,129 +26,102 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class QueryEngine:
-    """Query engine for searching PDF documents."""
+    """
+    Search engine for querying indexed PDF documents.
+    """
     
-    def __init__(self, index_name: str = "pdf-data-vector"):
+    def __init__(
+        self,
+        index_name: str = "pdf-embeddings",
+        mistral_api_key: Optional[str] = None,
+        pinecone_api_key: Optional[str] = None,
+        pinecone_region: Optional[str] = None,
+        model: str = "mistral-embed"
+    ):
         """
         Initialize the query engine.
         
         Args:
-            index_name: Name of the Pinecone index to use
+            index_name: Name of the Pinecone index
+            mistral_api_key: Mistral API key (defaults to env var)
+            pinecone_api_key: Pinecone API key (defaults to env var)
+            pinecone_region: Pinecone environment region (defaults to env var)
+            model: Model to use for embeddings
         """
-        logger.info("Initializing query engine")
-        self.embedding_generator = EmbeddingsGenerator()
-        self.pinecone_indexer = PineconeIndexer(index_name=index_name)
-    
-    def search(self, 
-               query: str, 
-               top_k: int = 5, 
-               alpha: float = 0.5) -> List[Dict]:
-        """
-        Search for documents matching the query.
+        # Get API keys from environment variables if not provided
+        self.mistral_api_key = mistral_api_key or os.environ.get("MISTRAL_API_KEY")
+        self.pinecone_api_key = pinecone_api_key or os.environ.get("PINECONE_API_KEY")
+        self.pinecone_region = pinecone_region or os.environ.get("PINECONE_REGION")
         
-        Args:
-            query: User query
-            top_k: Number of results to return
-            alpha: Weight for hybrid search (0 = sparse only, 1 = dense only)
-            
-        Returns:
-            List of search results with text matches and document info
-        """
-        logger.info(f"Processing query: '{query}'")
+        # Initialize embeddings generator and indexer
+        try:
+            self.embeddings_generator = EmbeddingsGenerator(api_key=self.mistral_api_key, model=model)
+            logger.info(f"Initialized EmbeddingsGenerator with model: {model}")
+        except Exception as e:
+            logger.error(f"Error initializing EmbeddingsGenerator: {str(e)}")
+            self.embeddings_generator = None
         
         try:
-            # Generate query embeddings
-            query_chunks = [{"text": query, "chunk_id": 0, "filename": "query", "document_id": "query", "file_path": "", "chunk_count": 1}]
-            query_embeddings = self.embedding_generator.generate_hybrid_embeddings(query_chunks)[0]
+            self.indexer = PineconeIndexer(
+                api_key=self.pinecone_api_key,
+                environment=self.pinecone_region,
+                index_name=index_name
+            )
+            logger.info(f"Initialized PineconeIndexer with index: {index_name}")
+        except Exception as e:
+            logger.error(f"Error initializing PineconeIndexer: {str(e)}")
+            self.indexer = None
+    
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        alpha: float = 0.5
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for similar documents using hybrid search.
+        
+        Args:
+            query: The search query
+            top_k: Number of results to return
+            alpha: Weight for hybrid search (higher values favor semantic search)
             
-            # Search Pinecone
-            results = self.pinecone_indexer.search(
-                query_text=query,
-                query_embedding=query_embeddings["dense_embedding"],
-                query_sparse_embedding=query_embeddings["sparse_embedding"],
+        Returns:
+            List of search results with metadata
+        """
+        if not self.embeddings_generator or not self.indexer:
+            error_msg = "Cannot perform search: "
+            if not self.embeddings_generator:
+                error_msg += "EmbeddingsGenerator not initialized. "
+            if not self.indexer:
+                error_msg += "PineconeIndexer not initialized."
+            logger.error(error_msg)
+            return []
+        
+        logger.info(f"Searching for: '{query}' (top_k={top_k}, alpha={alpha})")
+        
+        try:
+            # Generate embeddings for the query
+            query_embedding = self.embeddings_generator.embed_query(query)
+            
+            if not query_embedding:
+                logger.error("Failed to generate embeddings for query")
+                return []
+            
+            # Perform hybrid search
+            results = self.indexer.hybrid_search(
+                query=query,
+                embedding=query_embedding,
                 top_k=top_k,
                 alpha=alpha
             )
             
-            # Group results by filename
-            grouped_results = self._group_results_by_file(results)
+            logger.info(f"Found {len(results)} results for query: '{query}'")
+            return results
             
-            # Format for display
-            formatted_results = self._format_results(grouped_results)
-            
-            return formatted_results
-        
         except Exception as e:
-            logger.error(f"Error searching: {str(e)}")
+            logger.error(f"Error during search: {str(e)}")
             return []
-    
-    def _group_results_by_file(self, results: List[Dict]) -> Dict[str, List[Dict]]:
-        """
-        Group search results by filename.
-        
-        Args:
-            results: List of search results
-            
-        Returns:
-            Dictionary mapping filenames to lists of results
-        """
-        grouped = {}
-        for result in results:
-            filename = result["filename"]
-            if filename not in grouped:
-                grouped[filename] = []
-            grouped[filename].append(result)
-        
-        # Sort each group by score
-        for filename in grouped:
-            grouped[filename].sort(key=lambda x: x["score"], reverse=True)
-        
-        return grouped
-    
-    def _format_results(self, grouped_results: Dict[str, List[Dict]]) -> List[Dict]:
-        """
-        Format grouped results for display.
-        
-        Args:
-            grouped_results: Dictionary mapping filenames to lists of results
-            
-        Returns:
-            List of formatted results
-        """
-        formatted = []
-        
-        # Sort files by highest score in each group
-        sorted_files = sorted(
-            grouped_results.keys(),
-            key=lambda x: max([r["score"] for r in grouped_results[x]]),
-            reverse=True
-        )
-        
-        for filename in sorted_files:
-            file_results = grouped_results[filename]
-            top_result = file_results[0]  # Highest scoring result for this file
-            
-            # Collect all matching text snippets
-            text_matches = []
-            for result in file_results:
-                text_matches.append({
-                    "text": result["text"],
-                    "score": result["score"],
-                    "chunk_id": result["chunk_id"]
-                })
-            
-            # Format the result
-            formatted_result = {
-                "filename": filename,
-                "file_path": top_result["file_path"],
-                "document_id": top_result["document_id"],
-                "score": top_result["score"],  # Use highest score
-                "text_matches": text_matches
-            }
-            
-            formatted.append(formatted_result)
-        
-        return formatted
     
     def get_stats(self) -> Dict:
         """
@@ -151,7 +130,7 @@ class QueryEngine:
         Returns:
             Dictionary with index statistics
         """
-        return self.pinecone_indexer.get_stats()
+        return self.indexer.get_stats()
 
 
 def main():
@@ -176,7 +155,6 @@ def main():
     for i, result in enumerate(results):
         print(f"Document {i+1}: {result['filename']}")
         print(f"Score: {result['score']}")
-        print(f"Path: {result['file_path']}")
         print(f"Matches:")
         
         for j, match in enumerate(result['text_matches'][:2]):  # Show up to 2 matches
