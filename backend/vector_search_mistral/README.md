@@ -10,6 +10,7 @@ A powerful PDF search engine that uses Mistral OCR to extract text from PDFs, pr
 - **Scalable Storage**: Leverages Pinecone vector database for efficient storage and retrieval
 - **Command-line Interface**: Easy-to-use CLI for processing PDFs and searching content
 - **Enhanced RAG**: Uses OpenAI to summarize, analyze, explain, or provide detailed information based on search results
+- **Person Queries**: Automatically detects queries about specific individuals and extracts their projects and roles
 
 ## Installation
 
@@ -82,6 +83,9 @@ The easiest way to use this system is with the provided pdf-search script:
 
 # Search PDFs with RAG processing
 ./backend/vector_search_mistral/pdf-search search "your search query" --rag --rag-mode explain
+
+# Find projects by a specific person
+./backend/vector_search_mistral/pdf-search search "Give me all projects that John Smith has worked on" --rag
 ```
 
 ### Process and Index PDFs
@@ -110,7 +114,7 @@ Options:
 - `--top-k`: Number of results to return (default: 5)
 - `--alpha`: Weight for hybrid search (0 = sparse only, 1 = dense only) (default: 0.5)
 - `--rag`: Enable RAG processing with OpenAI
-- `--rag-mode`: RAG processing mode when --rag is enabled (choices: summarize, analyze, explain, detail) (default: summarize)
+- `--rag-mode`: RAG processing mode when --rag is enabled (choices: summarize, analyze, explain, detail, person) (default: summarize)
 - `--model`: OpenAI model to use for RAG (default: gpt-3.5-turbo)
 
 ## RAG Processing Modes
@@ -121,11 +125,24 @@ When using the `--rag` flag, you can choose from different processing modes:
 - **analyze**: Analyzes the information and provides insights
 - **explain**: Explains the concepts mentioned in the results
 - **detail**: Provides detailed information based on the results
+- **person**: Extracts information about a specific person, including projects they've worked on
+
+The system automatically detects when you're asking about a specific person and switches to the person mode. For example:
+
+```bash
+# These queries will automatically use the person mode
+./backend/vector_search_mistral/pdf-search search "Give me all projects that Manish Mardia has worked on" --rag
+./backend/vector_search_mistral/pdf-search search "What projects has Jane Smith been involved in?" --rag
+./backend/vector_search_mistral/pdf-search search "Show me John Doe's project history" --rag
+```
 
 Example:
 ```bash
 # Get a detailed explanation of vector search concepts
 ./backend/vector_search_mistral/pdf-search search "vector search concepts" --rag --rag-mode explain
+
+# Get projects for a specific person
+./backend/vector_search_mistral/pdf-search search "Give me all projects that Manish Mardia has worked on" --rag
 ```
 
 ## Architecture
@@ -166,6 +183,16 @@ rag_output = process_rag_results(
 
 # Display the processed results
 print(rag_output["processed_result"])
+
+# Find projects for a specific person
+person_query = "Give me all projects that Manish Mardia has worked on"
+results = search_pdfs(person_query)
+person_info = process_rag_results(
+    query=person_query,
+    search_results=results,
+    mode="person"  # The system will also auto-detect this is a person query
+)
+print(person_info["processed_result"])
 ```
 
 ## Troubleshooting
@@ -222,6 +249,13 @@ If you encounter errors with the OpenAI API, check:
 3. You have sufficient credits in your OpenAI account
 4. Your OpenAI API requests are not being rate limited
 
+### Person Detection Issues
+
+If the system doesn't automatically detect a person query:
+1. Make sure you're using a clear query format like "Give me all projects that [Person Name] has worked on"
+2. Explicitly specify the mode: `--rag-mode person`
+3. Check that the person's name appears in the documents with the same spelling
+
 ## Performance Tuning
 
 - **Chunk Size**: Smaller chunks (200-500 chars) work better for precise answers, larger chunks (1000-2000 chars) preserve more context
@@ -234,6 +268,7 @@ If you encounter errors with the OpenAI API, check:
   - explain: Best for educational contexts
   - analyze: Best for finding insights
   - detail: Best for comprehensive information
+  - person: Best for finding information about specific individuals and their projects
 
 ## Limitations
 
@@ -242,6 +277,7 @@ If you encounter errors with the OpenAI API, check:
 - Maximum file size for Mistral OCR API may be limited (typically 50MB)
 - NLTK download may fail due to SSL certificate issues (automatic fallback implemented)
 - OpenAI API usage incurs costs based on token consumption
+- Person detection may not work perfectly for uncommon names or ambiguous queries
 
 ## Future Improvements
 
@@ -250,4 +286,6 @@ If you encounter errors with the OpenAI API, check:
 - Add document similarity search
 - Add document filtering by metadata
 - Support for more LLMs beyond OpenAI
-- Web interface for searching and viewing results 
+- Web interface for searching and viewing results
+- Enhanced person and organization entity extraction
+- Timeline visualization for person's project history 

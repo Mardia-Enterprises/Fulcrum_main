@@ -59,6 +59,70 @@ class OpenAIProcessor:
                 logger.error(f"Error initializing OpenAI client: {str(e)}")
                 self.client = None
     
+    def is_person_query(self, query: str) -> bool:
+        """
+        Check if the query is asking about a specific person.
+        
+        Args:
+            query: The search query
+            
+        Returns:
+            True if the query is about a person, False otherwise
+        """
+        # Simple keyword check - could be enhanced with NLP
+        person_keywords = [
+            "who is", "worked on", "projects by", "person", "employee", 
+            "staff", "personnel", "team member", "colleague", "manager",
+            "engineer", "supervisor", "lead", "director", "worked with"
+        ]
+        
+        lower_query = query.lower()
+        return any(keyword in lower_query for keyword in person_keywords)
+    
+    def extract_person_name(self, query: str) -> Optional[str]:
+        """
+        Extract a person's name from the query.
+        
+        Args:
+            query: The search query
+            
+        Returns:
+            The extracted person name if found, None otherwise
+        """
+        if not self.client:
+            # Simple fallback if OpenAI client not available
+            words = query.split()
+            for i in range(len(words)-1):
+                # Simple heuristic: look for consecutive capitalized words
+                if words[i][0].isupper() and words[i+1][0].isupper():
+                    return f"{words[i]} {words[i+1]}"
+            
+            # Look for single capitalized words that might be names
+            for word in words:
+                if word[0].isupper() and len(word) > 2 and word.lower() not in ["who", "what", "give", "list", "show", "tell", "find"]:
+                    return word
+            
+            return None
+        
+        try:
+            # Use OpenAI to extract the person name
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "Extract only the full name of the person being asked about in the query. Respond with only the name, nothing else. If no specific person is mentioned, respond with 'NONE'."},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0.0,
+                max_tokens=50,
+            )
+            
+            name = response.choices[0].message.content.strip()
+            return None if name == 'NONE' else name
+            
+        except Exception as e:
+            logger.error(f"Error extracting person name: {str(e)}")
+            return None
+    
     def summarize_search_results(
         self, 
         query: str, 
@@ -76,6 +140,8 @@ class OpenAIProcessor:
                 - analyze: Analyze the information and provide insights
                 - explain: Explain the concepts mentioned in the results
                 - detail: Provide detailed information based on the results
+                - projects: Specifically extract project information
+                - person: Extract information about a specific person
             
         Returns:
             Dictionary with processed results
@@ -93,11 +159,20 @@ class OpenAIProcessor:
                 "original_results": []
             }
         
+        # Auto-detect if this is a person query
+        is_person_query = self.is_person_query(query)
+        person_name = self.extract_person_name(query) if is_person_query else None
+        
+        # If this is a person query but no mode was specified, set to "person"
+        if is_person_query and mode == "summarize":
+            mode = "person"
+            logger.info(f"Auto-detected person query for '{person_name}'. Using 'person' mode.")
+        
         # Prepare content from search results
         content = self._prepare_content_from_results(search_results)
         
         # Prepare system message based on mode
-        system_message = self._get_system_message(mode)
+        system_message = self._get_system_message(mode, person_name)
         
         # Prepare user message
         user_message = f"""Query: {query}
@@ -106,6 +181,9 @@ Content from search results:
 {content}
 
 Please {mode} this information in relation to the query."""
+
+        if mode == "person" and person_name:
+            user_message += f"\n\nExtract all projects and work that {person_name} has been involved with. Organize by project."
         
         try:
             # Call OpenAI API
@@ -127,6 +205,7 @@ Please {mode} this information in relation to the query."""
                 "mode": mode,
                 "processed_result": processed_text,
                 "model_used": self.model,
+                "person_name": person_name if is_person_query else None,
                 "original_results": search_results
             }
             
@@ -161,12 +240,13 @@ Please {mode} this information in relation to the query."""
         
         return "\n".join(content_parts)
     
-    def _get_system_message(self, mode: str) -> str:
+    def _get_system_message(self, mode: str, person_name: Optional[str] = None) -> str:
         """
         Get the appropriate system message based on the processing mode.
         
         Args:
             mode: Processing mode (summarize, analyze, explain, or detail)
+            person_name: Name of the person if this is a person query
             
         Returns:
             System message for OpenAI
@@ -194,6 +274,23 @@ background context where helpful. Your explanation should be accessible to someo
 Given search results from a document database, extract and organize all relevant details that address the 
 user's query. Be thorough and precise, citing specific information from each document. Structure your response 
 with clear sections and subsections to cover all aspects of the query in depth."""
+
+        elif mode == "person":
+            prompt = """You are an AI assistant that extracts information about specific people from documents.
+Given search results from a document database, extract all information related to the person mentioned in the query.
+Focus on identifying projects they've worked on, their role in each project, their expertise, and any other relevant details.
+Format your response as a structured profile with clear sections for:
+1. Projects Involved In (list each project with details)
+2. Roles and Responsibilities 
+3. Areas of Expertise
+4. Other Relevant Information
+
+Be concise but thorough. Only include information that is clearly stated in the documents. If a document filename contains information about a project, make sure to include that in your analysis."""
+
+            if person_name:
+                prompt += f"\n\nThe person you need to extract information about is: {person_name}"
+                
+            return prompt
             
         else:
             return """You are an AI assistant that helps extract and organize information from document search results.

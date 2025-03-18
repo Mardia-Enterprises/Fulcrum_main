@@ -43,9 +43,10 @@ def setup_args_parser():
     search_parser.add_argument("--top-k", type=int, default=5, help="Number of results to return")
     search_parser.add_argument("--alpha", type=float, default=0.5, help="Weight for hybrid search (0=sparse only, 1=dense only)")
     search_parser.add_argument("--rag", action="store_true", help="Enable RAG processing with OpenAI")
-    search_parser.add_argument("--rag-mode", choices=["summarize", "analyze", "explain", "detail"], default="summarize", 
-                               help="RAG processing mode when --rag is enabled")
+    search_parser.add_argument("--rag-mode", choices=["summarize", "analyze", "explain", "detail", "person"], 
+                               default="summarize", help="RAG processing mode when --rag is enabled")
     search_parser.add_argument("--model", default="gpt-3.5-turbo", help="OpenAI model to use for RAG")
+    search_parser.add_argument("--no-raw", action="store_true", help="Hide raw search results when using RAG")
     
     return parser
 
@@ -67,6 +68,51 @@ def check_environment():
         sys.exit(1)
     else:
         print("\n✅ All required environment variables are set!")
+
+def format_search_results(results: List[Dict[str, Any]], detailed: bool = False) -> str:
+    """Format search results for display."""
+    if not results:
+        return "No matching documents found."
+    
+    output = []
+    for i, result in enumerate(results):
+        output.append(f"Result #{i+1}")
+        output.append(f"Document: {result['metadata']['filename']}")
+        output.append(f"Score: {result['score']:.4f}")
+        
+        if detailed:
+            output.append(f"Text: {result['text']}")
+        else:
+            text = result['text']
+            if len(text) > 200:
+                text = text[:200] + "..."
+            output.append(f"Text: {text}")
+        
+        output.append("")
+    
+    return "\n".join(output)
+
+def format_condensed_results(results: List[Dict[str, Any]]) -> str:
+    """Format search results in a condensed format."""
+    if not results:
+        return "No matching documents found."
+    
+    output = []
+    for i, result in enumerate(results):
+        output.append(f"[{i+1}] {result['metadata']['filename']} (Score: {result['score']:.4f})")
+    
+    return "\n".join(output)
+
+def is_person_query(query: str) -> bool:
+    """Simple check if this is a person query."""
+    person_keywords = [
+        "who is", "worked on", "projects by", "person", "employee", 
+        "staff", "personnel", "team member", "colleague", "manager",
+        "engineer", "supervisor", "lead", "director", "worked with"
+    ]
+    
+    lower_query = query.lower()
+    return any(keyword in lower_query for keyword in person_keywords)
 
 def main():
     """Main entry point for the script."""
@@ -113,8 +159,15 @@ def main():
     
     # Search command
     elif args.command == "search":
+        # Detect if this is a person query and adjust mode
+        if is_person_query(args.query) and args.rag and args.rag_mode == "summarize":
+            args.rag_mode = "person"
+            logger.info(f"Auto-detected person query. Using '{args.rag_mode}' mode.")
+        
         print(f"Searching for: {args.query}")
         print(f"Top-k results: {args.top_k}, Alpha: {args.alpha}")
+        if args.rag:
+            print(f"RAG mode: {args.rag_mode}")
         
         # Search for documents
         results = search_pdfs(
@@ -128,6 +181,7 @@ def main():
         
         if not results:
             print("No matching documents found.")
+            return
         
         # Apply RAG processing if enabled
         if args.rag and results:
@@ -137,7 +191,22 @@ def main():
                 if not os.environ.get("OPENAI_API_KEY"):
                     print("\n⚠️ Warning: OPENAI_API_KEY not set in environment. RAG processing may fail.")
                 
-                print(f"\n--- RAG Processing ({args.rag_mode}) ---")
+                # If person mode, use a more descriptive header
+                if args.rag_mode == "person":
+                    # Extract the person name from the query (simple method)
+                    words = args.query.split()
+                    name = "the person"
+                    
+                    for i in range(len(words) - 1):
+                        if words[i][0].isupper() and words[i+1][0].isupper():
+                            name = f"{words[i]} {words[i+1]}"
+                            break
+                    
+                    print(f"\n--- Projects and Information for {name} ---")
+                else:
+                    print(f"\n--- RAG Processing ({args.rag_mode}) ---")
+                
+                # Process with OpenAI
                 rag_result = process_rag_results(
                     query=args.query,
                     search_results=results,
@@ -148,32 +217,29 @@ def main():
                 if "error" in rag_result:
                     print(f"Error: {rag_result['error']}")
                 else:
+                    # Get the person name if available
+                    person_name = rag_result.get("person_name")
+                    if person_name and args.rag_mode == "person":
+                        print(f"\n--- Information for {person_name} ---")
+                    
+                    # Print the processed result
                     print("\n" + rag_result["processed_result"])
                 
-                # Also print raw results in condensed format
-                print("\n--- Raw Search Results ---")
-                for i, result in enumerate(results):
-                    print(f"[{i+1}] {result['metadata']['filename']} (Score: {result['score']:.4f})")
+                # Also print raw results if requested
+                if not args.no_raw:
+                    print("\n--- Source Documents ---")
+                    print(format_condensed_results(results))
+                    print("\nUse the --no-raw flag to hide source documents.")
                 
             except Exception as e:
                 logger.error(f"Error in RAG processing: {str(e)}")
                 print(f"\nError processing with OpenAI: {str(e)}")
                 
                 # Fall back to showing regular results
-                for i, result in enumerate(results):
-                    print(f"Result #{i+1}")
-                    print(f"Document: {result['metadata']['filename']}")
-                    print(f"Score: {result['score']:.4f}")
-                    print(f"Text: {result['text'][:200]}..." if len(result['text']) > 200 else result['text'])
-                    print()
+                print(format_search_results(results))
         else:
             # Show regular results
-            for i, result in enumerate(results):
-                print(f"Result #{i+1}")
-                print(f"Document: {result['metadata']['filename']}")
-                print(f"Score: {result['score']:.4f}")
-                print(f"Text: {result['text'][:200]}..." if len(result['text']) > 200 else result['text'])
-                print()
+            print(format_search_results(results))
     
     # No command specified
     else:
