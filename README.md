@@ -1,4 +1,4 @@
-# EngiVerse Chat Application
+# Fulcrum Chat Application
 
 A modern React-based chat interface for engineers, featuring a sleek design with a sidebar navigation and AI-powered chat functionality.
 
