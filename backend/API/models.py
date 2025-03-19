@@ -24,6 +24,7 @@ class EmployeeResponse(BaseModel):
     role: str
     score: float
     education: Any
+    years_experience: Any = None
     relevant_projects: List[Any]
 
 class EmployeeDetail(BaseModel):

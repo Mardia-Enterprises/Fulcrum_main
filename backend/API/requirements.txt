@@ -1,7 +1,9 @@
 fastapi>=0.110.0
 uvicorn>=0.27.1
 python-dotenv>=1.0.1
-pinecone>=0.8.0
+supabase>=2.3.0
 openai>=1.66.3
 mistralai>=1.5.1
-python-multipart>=0.0.9 
+python-multipart>=0.0.9
+pydantic>=2.6.1
+loguru>=0.7.2 
