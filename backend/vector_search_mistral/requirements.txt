@@ -1,8 +1,18 @@
 # Core dependencies
-mistralai>=1.5.0,<2.0.0
-pinecone>=6.0.0,<7.0.0
-# pinecone-client>=6.0.0  # Old SDK name
-openai>=1.0.0,<2.0.0
+mistralai>=0.0.3
+openai>=1.0.0
+python-dotenv>=1.0.0
+nltk>=3.7
+tiktoken>=0.4.0
+numpy>=1.22.0
+requests>=2.28.0
+tqdm>=4.64.0
+PyPDF2>=3.0.0
+supabase>=1.0.0
+
+# Command line interface
+colorama>=0.4.4
+argparse>=1.4.0
 
 # PDF processing
 # PyPDF2>=1.26.0  # Uncomment if needed for basic PDF parsing
@@ -10,14 +20,14 @@ openai>=1.0.0,<2.0.0
 # pytesseract>=0.3.7  # Uncomment if OCR is needed
 
 # Environment and utilities
-python-dotenv>=1.0.0,<2.0.0
-numpy>=1.24.0,<2.0.0
-nltk>=3.8.1,<4.0.0
-tiktoken>=0.5.1,<0.6.0
+# python-dotenv>=1.0.0,<2.0.0
+# numpy>=1.24.0,<2.0.0
+# nltk>=3.8.1,<4.0.0
+# tiktoken>=0.5.1,<0.6.0
 
 # Web and networking
 # flask>=2.0.0  # Uncomment if web server is needed
-requests>=2.31.0,<3.0.0
+# requests>=2.31.0,<3.0.0
 
 # File and path handling
 pathlib>=1.0.1,<2.0.0

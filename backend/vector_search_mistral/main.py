@@ -42,10 +42,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("vector_search")
 
-# Try to load environment variables
+# Try to load environment variables from root .env file
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+    env_path = os.path.join(root_dir, ".env")
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        logger.info(f"Loaded environment variables from {env_path}")
+    else:
+        logger.warning(f"Root .env file not found at {env_path}. Using system environment variables.")
 except ImportError:
     logger.info("python-dotenv not installed. Using system environment variables.")
 
@@ -53,9 +59,10 @@ except ImportError:
 from backend.vector_search_mistral.pdf_processor import PDFProcessor, create_pdf_processor
 from backend.vector_search_mistral.text_preprocessor import TextPreprocessor, create_text_preprocessor
 from backend.vector_search_mistral.embeddings_generator import EmbeddingsGenerator
-from backend.vector_search_mistral.pinecone_indexer import PineconeIndexer
+from backend.vector_search_mistral.supabase_indexer import SupabaseIndexer, create_supabase_indexer
 from backend.vector_search_mistral.query_engine import QueryEngine
 from backend.vector_search_mistral.openai_processor import OpenAIProcessor
+from backend.vector_search_mistral.check_env import check_required_variables
 
 # Check environment variables
 def check_env_vars() -> bool:
@@ -65,36 +72,27 @@ def check_env_vars() -> bool:
     Returns:
         True if all required variables are set, False otherwise
     """
-    required_vars = [
-        "MISTRAL_API_KEY",
-        "PINECONE_API_KEY",
-        "PINECONE_ENVIRONMENT"
-    ]
+    success, missing_vars = check_required_variables()
     
-    # OpenAI API key is only required for RAG
-    if os.environ.get("USE_RAG", "").lower() == "true":
-        required_vars.append("OPENAI_API_KEY")
-    
-    missing_vars = [var for var in required_vars if not os.environ.get(var)]
-    
-    if missing_vars:
-        logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
-        logger.error("Please set these variables in your environment or .env file")
+    if not success:
+        # Log missing variables
+        logger.error(f"Missing required environment variables: {', '.join([var for var, _ in missing_vars])}")
+        logger.error("Please set these variables in the root .env file")
         return False
     
     return True
 
-def init_components() -> Tuple[PDFProcessor, EmbeddingsGenerator, PineconeIndexer, QueryEngine]:
+def init_components() -> Tuple[PDFProcessor, EmbeddingsGenerator, SupabaseIndexer, QueryEngine]:
     """
     Initialize the main components of the system.
     
     Returns:
-        Tuple of (PDFProcessor, EmbeddingsGenerator, PineconeIndexer, QueryEngine)
+        Tuple of (PDFProcessor, EmbeddingsGenerator, SupabaseIndexer, QueryEngine)
     """
     # Create components
     pdf_processor = create_pdf_processor()
     embeddings_generator = EmbeddingsGenerator()
-    vector_db = PineconeIndexer()
+    vector_db = create_supabase_indexer()
     query_engine = QueryEngine(embeddings_generator, vector_db)
     
     return pdf_processor, embeddings_generator, vector_db, query_engine
@@ -120,14 +118,41 @@ def process_pdfs(
     Returns:
         Dictionary with processing statistics
     """
-    # Check if pdf_dir exists
+    # Check if pdf_dir exists, create it if it doesn't
     if not os.path.exists(pdf_dir):
-        raise FileNotFoundError(f"PDF directory not found: {pdf_dir}")
+        logger.info(f"PDF directory not found: {pdf_dir}. Creating it...")
+        try:
+            os.makedirs(pdf_dir, exist_ok=True)
+            logger.info(f"Created PDF directory: {pdf_dir}")
+            logger.info(f"Please place PDF files in this directory and run the command again.")
+            return {
+                "status": "directory_created",
+                "message": f"Created directory {pdf_dir}. Please add PDF files and run again.",
+                "total_pdfs": 0,
+                "total_chunks": 0,
+                "total_embeddings": 0,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+        except Exception as e:
+            raise RuntimeError(f"Failed to create PDF directory {pdf_dir}: {str(e)}")
+    
+    # Check if directory has PDF files
+    pdf_files = [f for f in os.listdir(pdf_dir) if f.lower().endswith('.pdf')]
+    if not pdf_files:
+        logger.warning(f"No PDF files found in {pdf_dir}")
+        return {
+            "status": "no_pdfs",
+            "message": f"No PDF files found in {pdf_dir}. Please add PDF files and run again.",
+            "total_pdfs": 0,
+            "total_chunks": 0,
+            "total_embeddings": 0,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
     
     # Initialize components
     pdf_processor = create_pdf_processor(chunk_size, chunk_overlap)
     embeddings_generator = EmbeddingsGenerator()
-    vector_db = PineconeIndexer()
+    vector_db = create_supabase_indexer()
     
     logger.info(f"Processing PDF files in {pdf_dir}")
     start_time = time.time()
@@ -139,6 +164,7 @@ def process_pdfs(
     total_pdfs = len(processed_docs)
     total_chunks = 0
     total_embeddings = 0
+    total_failures = 0
     error_count = 0
     
     # Process each document
@@ -158,31 +184,73 @@ def process_pdfs(
                 logger.warning(f"No chunks found in document: {doc.get('filename', 'unknown')}")
                 continue
             
-            # Generate embeddings for chunks
-            embeddings = []
-            for i, chunk in enumerate(chunks):
-                # Generate embedding for chunk
-                chunk_embedding = embeddings_generator.generate_embeddings([chunk])[0]
+            # Generate embeddings for chunks with partial result handling
+            try:
+                # Process all chunks at once with partial result support
+                embedding_results = embeddings_generator.generate_embeddings_with_partial_results(chunks)
                 
-                # Create document with embedding
-                embedded_doc = {
-                    "id": f"{doc.get('id', 'doc')}_{i}",
-                    "text": chunk,
-                    "embedding": chunk_embedding,
-                    "metadata": {
-                        "filename": doc.get("filename", ""),
-                        "chunk_index": i,
-                        "total_chunks": len(chunks)
+                successful_embeddings = embedding_results["embeddings"]
+                failed_chunks = embedding_results["failed_texts"]
+                
+                # Log success and failure information
+                if embedding_results["failure_count"] > 0:
+                    logger.warning(
+                        f"Document {doc.get('filename', 'unknown')}: "
+                        f"{embedding_results['success_count']} chunks embedded successfully, "
+                        f"{embedding_results['failure_count']} chunks failed due to rate limits"
+                    )
+                
+                # Create document records for successfully embedded chunks
+                embedded_docs = []
+                for i, (chunk, embedding) in enumerate(zip(chunks[:len(successful_embeddings)], successful_embeddings)):
+                    # Validate the embedding vector before adding to the batch
+                    if not embedding or not isinstance(embedding, list) or len(embedding) == 0:
+                        logger.warning(f"Skipping chunk {i} due to invalid embedding (empty or null)")
+                        continue
+                    
+                    # Log embedding dimension for debugging
+                    if i == 0:  # Only log for the first embedding to avoid spam
+                        logger.info(f"First embedding dimension: {len(embedding)}")
+                    
+                    embedded_doc = {
+                        "id": f"{doc.get('id', 'doc')}_{i}",
+                        "text": chunk,
+                        "embedding": embedding,
+                        "metadata": {
+                            "filename": doc.get("filename", ""),
+                            "chunk_index": i,
+                            "total_chunks": len(chunks)
+                        }
                     }
-                }
+                    embedded_docs.append(embedded_doc)
                 
-                embeddings.append(embedded_doc)
-            
-            # Index document embeddings
-            indexed_count = vector_db.index_documents(embeddings)
-            total_embeddings += indexed_count
-            
-            logger.info(f"Processed {doc.get('filename', 'document')}: {len(chunks)} chunks, {indexed_count} vectors indexed")
+                # Index document embeddings if we have any successful ones
+                if embedded_docs:
+                    indexed_count = vector_db.index_documents(embedded_docs)
+                    total_embeddings += indexed_count
+                    
+                    if indexed_count == 0:
+                        logger.warning(f"Failed to index any chunks for {doc.get('filename', 'document')} - check vector dimensions")
+                    else:
+                        logger.info(
+                            f"Partially processed {doc.get('filename', 'document')}: "
+                            f"{indexed_count}/{len(embedded_docs)} chunks indexed into Supabase"
+                        )
+                
+                # Store information about failed chunks if needed
+                if failed_chunks:
+                    # Here you could implement storing metadata about failed chunks
+                    # for later retry or tracking purposes
+                    failed_chunk_count = len(failed_chunks)
+                    total_failures += failed_chunk_count
+                    logger.warning(
+                        f"Rate limit encountered - {failed_chunk_count} chunks from "
+                        f"{doc.get('filename', 'unknown')} could not be embedded"
+                    )
+                
+            except Exception as e:
+                logger.error(f"Error embedding document {doc.get('filename', 'unknown')}: {str(e)}")
+                error_count += 1
             
         except Exception as e:
             logger.error(f"Error processing document {doc.get('filename', 'unknown')}: {str(e)}")
@@ -191,18 +259,15 @@ def process_pdfs(
     # Calculate processing time
     processing_time = time.time() - start_time
     
-    # Create result summary
-    result = {
-        "total_pdfs": total_pdfs,
+    # Return processing stats
+    return {
+        "total_pdfs": len(processed_docs),
         "total_chunks": total_chunks,
-        "total_embeddings": total_embeddings,
-        "error_count": error_count,
-        "processing_time": processing_time,
-        "timestamp": datetime.datetime.now().isoformat()
+        "indexed_chunks": total_embeddings,
+        "failed_chunks": total_failures,
+        "errors": error_count,
+        "processing_time_seconds": processing_time
     }
-    
-    logger.info(f"Processing complete: {total_pdfs} PDFs, {total_chunks} chunks, {total_embeddings} embeddings, {error_count} errors")
-    return result
 
 def search(
     query: str,
@@ -235,16 +300,16 @@ def search(
     """
     # Initialize components
     embeddings_generator = EmbeddingsGenerator()
-    vector_db = PineconeIndexer()
+    vector_db = create_supabase_indexer()
     query_engine = QueryEngine(embeddings_generator, vector_db)
     
-    # Check if this is a person query
+    # Use a simple regex-based approach to check if this is a person query
     is_person_query = query_engine.is_person_query(query)
     person_name = None
     
     if is_person_query:
         person_name = query_engine.extract_person_name(query)
-        logger.info(f"Detected person query for: {person_name}")
+        logger.info(f"Detected person query for: {person_name or 'unknown person'}")
         # Auto-set RAG mode to "person" for person queries
         if use_rag:
             rag_mode = "person"

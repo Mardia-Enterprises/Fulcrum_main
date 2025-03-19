@@ -1,36 +1,47 @@
 """
-Query Engine for Vector Search
+Query Engine for PDF Search
 -------------------------------------------------------------------------------
-This module provides the core search functionality for the vector search system.
-It integrates embedding generation with vector database querying to enable
-semantic search over document content.
+This module provides a query engine that performs semantic searches over
+vectorized PDF documents. It handles the process of converting user queries
+into vector embeddings and retrieving relevant results from the vector database.
 
-The query engine supports hybrid search, combining dense vector similarity
-with optional filtering and enhancement capabilities. It orchestrates the
-process of converting search queries into vector representations and retrieving
-relevant results from the vector database.
-
-Key features:
-- Semantic search using vector embeddings
-- Configurable search parameters (top-k, alpha)
-- Robust error handling
-- Support for query enhancement methods
+The query engine supports various search features:
+1. Semantic search using vector embeddings
+2. Person-entity detection for specialized queries
+3. Hybrid search (dense and sparse retrieval)
+4. Configurable search parameters
 """
 
 import os
+import re
 import logging
-import sys
-import time
-from typing import List, Dict, Any, Optional, Union, Tuple
-from dotenv import load_dotenv
-from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
 
-# Add the parent directory to the Python path to enable absolute imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# Load environment variables
+from dotenv import load_dotenv
+
+# Try to import nltk for tokenization (with graceful fallback)
+try:
+    import nltk
+    from nltk.tokenize import word_tokenize
+    # Only download punkt if we're going to use it and it's not already downloaded
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        try:
+            nltk.download('punkt', quiet=True)
+        except:
+            pass
+    NLTK_AVAILABLE = True
+except ImportError:
+    logging.warning("NLTK tokenize not available. Using simple tokenization instead.")
+    NLTK_AVAILABLE = False
+    # Simple word tokenization fallback
+    word_tokenize = lambda x: x.split()
 
 # Use absolute imports instead of relative imports
 from backend.vector_search_mistral.embeddings_generator import EmbeddingsGenerator
-from backend.vector_search_mistral.pinecone_indexer import PineconeIndexer
+from backend.vector_search_mistral.supabase_indexer import SupabaseIndexer
 
 # Setup logging
 logging.basicConfig(
@@ -54,7 +65,7 @@ class QueryEngine:
     def __init__(
         self,
         embeddings_generator: Optional[EmbeddingsGenerator] = None,
-        vector_db: Optional[PineconeIndexer] = None
+        vector_db: Optional[SupabaseIndexer] = None
     ):
         """
         Initialize the query engine.
@@ -64,7 +75,7 @@ class QueryEngine:
             vector_db: Component for vector database operations
         """
         self.embeddings_generator = embeddings_generator or EmbeddingsGenerator()
-        self.vector_db = vector_db or PineconeIndexer()
+        self.vector_db = vector_db or SupabaseIndexer()
         
         logger.info("Initialized QueryEngine")
     
@@ -122,120 +133,133 @@ class QueryEngine:
     
     def is_person_query(self, query: str) -> bool:
         """
-        Determine if a query is asking about a specific person.
+        Detect if a query is asking about a specific person.
         
         Args:
-            query: The search query
+            query: Query string to check
             
         Returns:
-            True if the query is about a person, False otherwise
+            True if this appears to be a person query, False otherwise
         """
-        # Person-related keywords for detection
-        person_keywords = [
-            "who is", "worked on", "projects by", "person", "employee", 
-            "staff", "personnel", "team member", "colleague", "manager",
-            "engineer", "supervisor", "lead", "director", "worked with",
-            "responsible for", "involvement", "contribution", "role of"
+        # Use a simpler approach with regular expressions instead of NLTK
+        query = query.lower()
+        
+        # Common patterns for person queries
+        person_patterns = [
+            r"who is",
+            r"about .+",
+            r"what .+ (do|did|does)",
+            r"where .+ work",
+            r"when did .+ (join|start)",
+            r"experience of",
+            r"projects (by|of|from)",
+            r"resume of",
+            r"background of",
+            r"qualification[s]? of",
         ]
         
-        # Convert to lowercase for case-insensitive matching
-        lower_query = query.lower()
-        return any(keyword in lower_query for keyword in person_keywords)
+        # Check if any pattern matches
+        for pattern in person_patterns:
+            if re.search(pattern, query):
+                return True
+        
+        # Check for common keywords
+        person_keywords = [
+            "person", "employee", "staff", "personnel", "team member", 
+            "colleague", "manager", "engineer", "supervisor", "lead", 
+            "director", "worked with", "experience", "skills"
+        ]
+        
+        return any(keyword in query for keyword in person_keywords)
     
     def extract_person_name(self, query: str) -> Optional[str]:
         """
-        Extract a person's name from the query using simple heuristics.
+        Extract a person's name from a query.
         
         Args:
-            query: The search query
+            query: Query string that may contain a person name
             
         Returns:
-            The extracted person name if found, None otherwise
+            Extracted name or None if no name found
         """
-        words = query.split()
+        # Use regex patterns to find potential names
+        import re
         
-        # Look for consecutive capitalized words (likely a full name)
-        for i in range(len(words)-1):
-            if (len(words[i]) > 0 and len(words[i+1]) > 0 and 
-                words[i][0].isupper() and words[i+1][0].isupper()):
-                return f"{words[i]} {words[i+1]}"
+        # Common patterns for person name queries
+        name_patterns = [
+            r"(?:about|who is) ([A-Z][a-z]+ [A-Z][a-z]+)",
+            r"([A-Z][a-z]+ [A-Z][a-z]+)'s experience",
+            r"([A-Z][a-z]+ [A-Z][a-z]+)'s qualifications",
+            r"([A-Z][a-z]+ [A-Z][a-z]+)'s projects",
+            r"([A-Z][a-z]+ [A-Z][a-z]+)'s resume",
+        ]
         
-        # Look for single capitalized words that might be names
-        for word in words:
-            if (len(word) > 2 and word[0].isupper() and 
-                word.lower() not in ["who", "what", "give", "list", "show", "tell", "find"]):
-                return word
+        for pattern in name_patterns:
+            match = re.search(pattern, query)
+            if match:
+                return match.group(1)
+        
+        # Fallback: look for capitalized word pairs (potential names)
+        matches = re.findall(r'([A-Z][a-z]+ [A-Z][a-z]+)', query)
+        if matches:
+            return matches[0]
         
         return None
 
-
 def create_query_engine(
     embeddings_api_key: Optional[str] = None,
-    vector_db_api_key: Optional[str] = None,
-    vector_db_environment: Optional[str] = None
+    vector_db_url: Optional[str] = None,
+    vector_db_api_key: Optional[str] = None
 ) -> QueryEngine:
     """
-    Create and initialize a query engine (convenience function).
-    
-    This function provides a simple interface for creating a QueryEngine
-    with the necessary components initialized with the provided API keys.
+    Create and configure a query engine with the specified parameters.
     
     Args:
-        embeddings_api_key: API key for the embeddings service
-        vector_db_api_key: API key for the vector database service
-        vector_db_environment: Environment for the vector database service
+        embeddings_api_key: API key for the embeddings model
+        vector_db_url: URL for the vector database
+        vector_db_api_key: API key for the vector database
         
     Returns:
-        Initialized QueryEngine
+        Configured QueryEngine instance
     """
-    # Initialize embeddings generator
+    # Create embeddings generator with specified API key
     embeddings_generator = EmbeddingsGenerator(api_key=embeddings_api_key)
     
-    # Initialize vector database
-    vector_db = PineconeIndexer(
-        api_key=vector_db_api_key,
-        environment=vector_db_environment
+    # Create Supabase indexer with specified parameters
+    vector_db = SupabaseIndexer(
+        url=vector_db_url,
+        api_key=vector_db_api_key
     )
     
-    # Create and return the query engine
+    # Create query engine with configured components
     return QueryEngine(
         embeddings_generator=embeddings_generator,
         vector_db=vector_db
     )
 
-
 def main():
-    """Test the query engine with a sample query."""
-    # Sample search
-    engine = QueryEngine()
+    """
+    Run a simple test query if this module is executed directly.
+    """
+    # Load environment variables
+    load_dotenv()
     
-    # Get index stats
-    stats = engine.vector_db.get_stats()
-    print(f"Index stats: {stats}")
+    # Set up query engine
+    query_engine = create_query_engine()
     
-    # Define a test query
-    test_query = "What are the key benefits of PDF search?"
+    # Test query
+    test_query = "What are the main components of a hydraulic system?"
+    print(f"Running test query: '{test_query}'")
     
-    # Search
-    results = engine.search(test_query, top_k=5)
+    # Search with the test query
+    results = query_engine.search(test_query, top_k=3)
     
-    # Display results
-    print(f"\nSearch results for: '{test_query}'")
-    print(f"Found {len(results)} matching documents\n")
-    
+    # Print results
+    print(f"Found {len(results)} results:")
     for i, result in enumerate(results):
-        print(f"Document {i+1}: {result['filename']}")
-        print(f"Score: {result['score']}")
-        print(f"Matches:")
-        
-        for j, match in enumerate(result['text_matches'][:2]):  # Show up to 2 matches
-            print(f"  {j+1}. {match['text'][:200]}...")
-        
-        if len(result['text_matches']) > 2:
-            print(f"  ... and {len(result['text_matches']) - 2} more matches")
-        
-        print()
-
+        print(f"\nResult {i+1} (score: {result['score']:.4f}):")
+        print(f"Text: {result['text'][:200]}...")
+        print(f"Metadata: {result['metadata']}")
 
 if __name__ == "__main__":
     main() 

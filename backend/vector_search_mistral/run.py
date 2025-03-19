@@ -20,6 +20,7 @@ import traceback
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import time
 
 # Add module path handling for production deployment
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -84,50 +85,44 @@ def setup_args_parser() -> argparse.ArgumentParser:
     
     return parser
 
-def check_environment() -> bool:
-    """
-    Verify that required environment variables are properly set.
-    
-    Returns:
-        bool: True if all required variables are set, False otherwise.
-    """
-    # Load environment variables from env file if available
+def load_root_env_vars():
     try:
         from dotenv import load_dotenv
-        # Look for .env file in script directory first, then current directory
-        env_paths = [
-            os.path.join(script_dir, ".env"),
-            os.path.join(os.getcwd(), ".env")
-        ]
         
-        for env_path in env_paths:
-            if os.path.exists(env_path):
-                load_dotenv(env_path)
-                logger.info(f"Loaded environment variables from {env_path}")
-                break
+        # Get the path to the root .env file
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+        env_path = os.path.join(root_dir, ".env")
+        
+        # Load environment variables
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            logger.info(f"Loaded environment variables from {env_path}")
+            return True
+        else:
+            logger.warning(f"Root .env file not found at {env_path}. Using system environment variables.")
+            return False
     except ImportError:
-        logger.warning("python-dotenv not installed. Using existing environment variables.")
+        logger.warning("python-dotenv not installed. Using system environment variables.")
+        return False
+
+def check_env_vars(args=None):
+    required_vars = ["MISTRAL_API_KEY", "SUPABASE_PROJECT_URL", "SUPABASE_PRIVATE_API_KEY"]
     
-    # Check for required environment variables
-    required_vars = ["MISTRAL_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"]
-    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    # Check if OpenAI API key is set when RAG is enabled
+    if args and hasattr(args, 'rag') and args.rag and hasattr(args, "command") and args.command == "search":
+        required_vars.append("OPENAI_API_KEY")
+    
+    missing_vars = []
+    for var in required_vars:
+        if not os.environ.get(var):
+            missing_vars.append(var)
     
     if missing_vars:
         logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
-        logger.error("Please set these variables in the environment or .env file.")
-        return False
-    
-    # Check for optional variables
-    optional_vars = ["OPENAI_API_KEY", "PINECONE_INDEX_NAME", "MISTRAL_MODEL", "OPENAI_MODEL"]
-    for var in optional_vars:
-        if not os.environ.get(var):
-            if var == "OPENAI_API_KEY":
-                logger.warning(f"{var} not set. RAG features will not be available.")
-            else:
-                logger.info(f"{var} not set. Using default value.")
-    
-    logger.info("Environment check passed. Required variables are set.")
-    return True
+        logger.error("Please set these variables in the root .env file")
+        sys.exit(1)
+    else:
+        logger.info("Environment check passed. Required variables are set.")
 
 def format_search_results(results: List[Dict[str, Any]], detailed: bool = False) -> str:
     """
@@ -214,64 +209,62 @@ def save_to_file(content: str, filename: str) -> None:
     except Exception as e:
         logger.error(f"Error saving results to {filename}: {str(e)}")
 
-def process_command(args) -> int:
-    """
-    Handle the 'process' command to index PDF documents.
+def process_command(args):
+    """Run the PDF processing command"""
+    logger.info(f"Processing PDFs from directory: {args.pdf_dir}")
     
-    Args:
-        args: Command line arguments
-        
-    Returns:
-        Exit code (0 for success, non-zero for errors)
-    """
     try:
+        # Import here to avoid circular imports
         from main import process_pdfs
         
-        # Validate input directory
-        pdf_dir = os.path.abspath(args.pdf_dir)
-        if not os.path.exists(pdf_dir):
-            logger.error(f"PDF directory does not exist: {pdf_dir}")
-            return 1
-        
-        logger.info(f"Processing PDFs in directory: {pdf_dir}")
-        logger.info(f"Chunk size: {args.chunk_size}, Chunk overlap: {args.chunk_overlap}")
-        
-        # Record start time for performance tracking
-        start_time = datetime.now()
-        
-        # Process and index PDFs
+        # Process PDFs
+        start_time = time.time()
         result = process_pdfs(
-            pdf_dir=pdf_dir,
+            pdf_dir=args.pdf_dir,
             chunk_size=args.chunk_size,
             chunk_overlap=args.chunk_overlap,
             force=args.force
         )
+        elapsed_time = time.time() - start_time
         
-        # Record end time
-        processing_time = datetime.now() - start_time
+        # Print processing summary
+        logger.info("=" * 60)
+        logger.info("PDF PROCESSING SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Total PDFs processed:    {result['total_pdfs']}")
+        logger.info(f"Total text chunks:       {result['total_chunks']}")
+        logger.info(f"Chunks indexed:          {result['indexed_chunks']}")
         
-        # Print results
-        print("\n--- Processing Summary ---")
-        print(f"Total PDFs processed: {result['total_pdfs']}")
-        print(f"Chunks created: {result['total_chunks']}")
-        print(f"Embeddings generated: {result['total_embeddings']}")
-        print(f"Errors: {result['error_count']}")
-        print(f"Processing time: {processing_time.total_seconds():.2f} seconds")
-            
-        logger.info(f"Processing completed: {result['total_pdfs']} PDFs, "
-                    f"{result['total_chunks']} chunks, "
-                    f"{result['total_embeddings']} embeddings, "
-                    f"{result['error_count']} errors")
+        if result.get('failed_chunks', 0) > 0:
+            logger.warning(f"Chunks failed (rate limit): {result['failed_chunks']}")
+            logger.warning("Some chunks could not be embedded due to API rate limits.")
+            logger.warning("The successfully embedded chunks have been stored in the database.")
+        
+        if result.get('errors', 0) > 0:
+            logger.warning(f"Documents with errors:   {result['errors']}")
+
+        success_pct = (result['indexed_chunks'] / result['total_chunks'] * 100) if result['total_chunks'] > 0 else 0
+        logger.info(f"Success rate:            {success_pct:.1f}%")
+        logger.info(f"Processing time:         {elapsed_time:.2f} seconds")
+        logger.info("=" * 60)
+        
+        # Show next steps
+        logger.info("\nNext steps:")
+        logger.info("  - Run a search query with: python -m vector_search_mistral.run search \"your query\"")
+        logger.info("  - Try enhanced RAG search with: python -m vector_search_mistral.run search \"your query\" --rag")
+        
+        if result.get('failed_chunks', 0) > 0:
+            logger.info("\nSuggestion for rate limits:")
+            logger.info("  - Wait a few minutes before processing more PDFs")
+            logger.info("  - Consider processing smaller batches of PDFs")
+            logger.info("  - Check your Mistral AI account rate limits")
+        
         return 0
     
-    except ImportError as e:
-        logger.error(f"Error importing required modules: {str(e)}")
-        print(f"Error: Could not import necessary modules: {str(e)}")
-        return 1
     except Exception as e:
         logger.error(f"Error processing PDFs: {str(e)}")
-        logger.debug(traceback.format_exc())
-        print(f"Error processing PDFs: {str(e)}")
+        if "--debug" in sys.argv:
+            traceback.print_exc()
         return 1
 
 def search_command(args) -> int:
@@ -378,8 +371,10 @@ def main() -> int:
         return 1
     
     # Check environment variables
-    if not check_environment():
+    if not load_root_env_vars():
         return 1
+    
+    check_env_vars(args)
     
     # Execute the appropriate command
     if args.command == "process":

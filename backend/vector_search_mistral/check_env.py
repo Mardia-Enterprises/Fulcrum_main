@@ -1,68 +1,113 @@
 #!/usr/bin/env python3
+"""
+Check for required environment variables.
+
+This script checks if all the environment variables required by the
+PDF Vector Search Engine are set. It's useful for troubleshooting 
+environment configuration issues.
+"""
 
 import os
 import sys
-from dotenv import load_dotenv
-from pathlib import Path
+from typing import Tuple, List, Optional, Any
 
-def main():
-    """Check if all required environment variables are set."""
-    # Load environment variables from .env file
-    dotenv_path = find_dotenv()
-    if dotenv_path:
-        print(f"Using .env file from: {dotenv_path}")
-        load_dotenv(dotenv_path)
-    else:
-        print("Warning: No .env file found. Using environment variables already set.")
+def load_environment() -> bool:
+    """
+    Load environment variables from the root .env file.
     
-    # List of required environment variables
+    Returns:
+        bool: True if environment variables were loaded successfully
+    """
+    try:
+        from dotenv import load_dotenv
+        
+        # Get the path to the root .env file
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+        env_path = os.path.join(root_dir, ".env")
+        
+        # Load environment variables
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            print(f"Loaded environment variables from {env_path}")
+            return True
+        else:
+            print(f"Root .env file not found at {env_path}. Using system environment variables.")
+            return False
+    except ImportError:
+        print("python-dotenv not installed. Using system environment variables.")
+        return False
+
+def is_mistral_available() -> bool:
+    """
+    Check if the Mistral AI package is available.
+    
+    Returns:
+        bool: True if the package is available
+    """
+    try:
+        import mistralai
+        return True
+    except ImportError:
+        return False
+
+def check_required_variables() -> Tuple[bool, List[Tuple[str, str]]]:
+    """
+    Check if all required environment variables are set.
+    
+    Returns:
+        tuple: (success, list of missing variables with descriptions)
+    """
+    # Load environment variables from the root .env file
+    load_environment()
+    
+    # Define required variables with descriptions
     required_vars = [
         ("MISTRAL_API_KEY", "Required for OCR text extraction and embedding generation."),
-        ("PINECONE_API_KEY", "Required for vector storage and retrieval."),
-        ("PINECONE_ENVIRONMENT", "Required for Pinecone configuration.")
+        ("SUPABASE_PROJECT_URL", "Required for Supabase configuration."),
+        ("SUPABASE_PRIVATE_API_KEY", "Required for Supabase configuration."),
     ]
+    
+    # If Mistral is not available, we need OpenAI for embeddings
+    if not is_mistral_available():
+        required_vars.append(("OPENAI_API_KEY", "Required for embeddings if Mistral is not available."))
     
     missing_vars = []
     
-    # Check each required environment variable
+    # Check each required variable
     for var_name, description in required_vars:
         if not os.environ.get(var_name):
             missing_vars.append((var_name, description))
     
-    # Print results
+    # Check optional variables and set defaults if needed
+    if not os.environ.get("SUPABASE_TABLE_NAME"):
+        os.environ["SUPABASE_TABLE_NAME"] = "pdf_documents"
+        print(f"Info: Using default SUPABASE_TABLE_NAME = 'pdf_documents'")
+    
+    # Return results
     if missing_vars:
+        return False, missing_vars
+    else:
+        return True, []
+
+def main() -> bool:
+    """
+    Main function that checks environment variables and prints the results.
+    
+    Returns:
+        bool: True if all required variables are set
+    """
+    success, missing_vars = check_required_variables()
+    
+    if not success:
         print("\n⚠️  Missing environment variables:")
         for var_name, description in missing_vars:
             print(f"  - {var_name}: {description}")
         
-        print("\nPlease set these environment variables in a .env file or in your shell.")
-        print("Example .env file content:")
-        print("--------------------------")
-        for var_name, _ in required_vars:
-            print(f"{var_name}=your_{var_name.lower()}")
-        
+        print("\nPlease set these environment variables in the root .env file.")
         return False
     else:
         print("\n✅ All required environment variables are set!")
         return True
-
-def find_dotenv():
-    """Find the .env file by checking multiple locations."""
-    # Check current directory
-    if Path(".env").exists():
-        return Path(".env").resolve()
-    
-    # Check script directory
-    script_dir = Path(__file__).parent.resolve()
-    if (script_dir / ".env").exists():
-        return (script_dir / ".env").resolve()
-    
-    # Check project root
-    project_root = script_dir.parent.parent
-    if (project_root / ".env").exists():
-        return (project_root / ".env").resolve()
-    
-    return None
 
 if __name__ == "__main__":
     success = main()

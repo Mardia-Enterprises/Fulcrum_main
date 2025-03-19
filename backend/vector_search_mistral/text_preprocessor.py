@@ -44,6 +44,15 @@ except ImportError:
     nltk = None
     sent_tokenize = None
 
+# Simple sentence splitting function for when NLTK is not available
+def simple_sentence_split(text):
+    """Split text into sentences using simple rules when NLTK is not available."""
+    if not text:
+        return []
+    # Split on common sentence endings
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    return [s.strip() for s in sentences if s.strip()]
+
 # Default settings
 DEFAULT_CHUNK_SIZE = 500
 DEFAULT_CHUNK_OVERLAP = 50
@@ -216,12 +225,8 @@ class TextPreprocessor:
                 logger.warning(f"Error using NLTK sentence tokenizer: {str(e)}")
                 logger.warning("Falling back to simple sentence splitting")
         
-        # Fallback: Simple regex-based sentence splitting
-        sentence_endings = r'(?<=[.!?])\s+'
-        sentences = re.split(sentence_endings, text)
-        
-        # Filter out empty sentences
-        return [s.strip() for s in sentences if s.strip()]
+        # Fallback: Use simple sentence splitting
+        return simple_sentence_split(text)
     
     def _create_chunks_from_sentences(self, sentences: List[str]) -> List[str]:
         """
@@ -308,6 +313,43 @@ class TextPreprocessor:
             return False
         
         return True
+
+    def _split_text_simple(self, text: str) -> List[str]:
+        """
+        Split text into sentences using simple regex rules.
+        
+        Args:
+            text: Text to split
+            
+        Returns:
+            List of sentences
+        """
+        return simple_sentence_split(text)
+
+    def _extract_person_information(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract information about a person from text.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Dictionary with extracted person information if found
+        """
+        try:
+            # Try to use standard punkt, not punkt_tab which is rarely available
+            from nltk.tokenize import word_tokenize
+            
+            # Simple person name detection using heuristics
+            words = word_tokenize(text.lower())
+            
+            # Look for person name patterns
+            # This is a simplified approach
+            return None  # Not implemented in this example
+            
+        except Exception as e:
+            logger.debug(f"Error extracting person information: {str(e)}")
+            return None
 
 
 def create_text_preprocessor(

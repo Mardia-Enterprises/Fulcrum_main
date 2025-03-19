@@ -150,6 +150,10 @@ class EmbeddingsGenerator:
         retry_count = 0
         last_error = None
         
+        # Check if we're passing a flag indicating we should skip retries
+        # This will be set by the outer function when it detects persistent rate limiting
+        skip_retries = getattr(self, '_skip_retries', False)
+        
         while retry_count < self.max_retries:
             try:
                 # Use the new embeddings.create API
@@ -163,7 +167,18 @@ class EmbeddingsGenerator:
                 
             except Exception as e:
                 last_error = e
+                error_str = str(e).lower()
                 retry_count += 1
+                
+                # Check if this is a rate limit error
+                is_rate_limit = any(marker in error_str for marker in 
+                                   ["rate limit", "429", "too many requests", "quota exceeded"])
+                
+                # If we're in skip_retries mode and this is a rate limit error,
+                # don't retry at all - immediately bubble up the error
+                if skip_retries and is_rate_limit:
+                    logger.warning("Rate limit detected while in skip_retries mode. Not retrying.")
+                    raise e
                 
                 # Log the error
                 logger.warning(f"Embedding API call failed (attempt {retry_count}/{self.max_retries}): {str(e)}")
@@ -196,6 +211,125 @@ class EmbeddingsGenerator:
         
         embeddings = self.generate_embeddings([query])
         return embeddings[0] if embeddings else [0.0] * 1024
+    
+    def generate_embeddings_with_partial_results(self, texts: List[str]) -> Dict[str, Any]:
+        """
+        Generate embeddings with support for partial results on rate limit errors.
+        
+        This method processes texts in smaller batches and returns both successfully
+        generated embeddings and failed texts, allowing the caller to save partial
+        results when rate limits are hit.
+        
+        Args:
+            texts: List of text chunks to embed
+            
+        Returns:
+            Dictionary containing:
+                - 'embeddings': List of successfully generated embeddings
+                - 'failed_texts': List of texts that failed embedding generation
+                - 'success_count': Number of successfully generated embeddings
+                - 'failure_count': Number of failed embedding generations
+                - 'completed': Boolean indicating if all texts were processed
+        """
+        if not texts:
+            logger.warning("Empty text list provided for embedding generation.")
+            return {
+                "embeddings": [],
+                "failed_texts": [],
+                "success_count": 0,
+                "failure_count": 0,
+                "completed": True
+            }
+        
+        # Use smaller batch size for better fault tolerance
+        actual_batch_size = min(self.batch_size, 5)
+        
+        # Process texts in batches
+        successful_embeddings = []
+        failed_texts = []
+        rate_limited = False
+        
+        # Keep track of rate limit errors to prevent endless loops
+        rate_limit_errors = 0
+        max_rate_limit_errors = 3  # Maximum number of rate limit errors before giving up
+        consecutive_rate_limit_errors = 0
+        max_consecutive_rate_limit_errors = 2  # Stop after 2 consecutive rate limit errors
+        
+        batch_start = 0
+        while batch_start < len(texts) and not rate_limited:
+            batch_end = min(batch_start + actual_batch_size, len(texts))
+            batch_texts = texts[batch_start:batch_end]
+            
+            try:
+                # If we're seeing too many consecutive rate limit errors,
+                # set a flag to skip retries in the inner function
+                self._skip_retries = (consecutive_rate_limit_errors >= max_consecutive_rate_limit_errors)
+                
+                # Generate embeddings for the batch with retry logic
+                batch_embeddings = self._generate_batch_with_retry(batch_texts)
+                successful_embeddings.extend(batch_embeddings)
+                
+                logger.info(f"Generated {len(batch_embeddings)} embeddings (batch {batch_start//actual_batch_size + 1})")
+                
+                # Successfully processed a batch, reset the consecutive error counter
+                consecutive_rate_limit_errors = 0
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # Check if this is a rate limit error
+                is_rate_limit = any(marker in error_str for marker in 
+                                   ["rate limit", "429", "too many requests", "quota exceeded"])
+                
+                if is_rate_limit:
+                    rate_limit_errors += 1
+                    consecutive_rate_limit_errors += 1
+                    logger.warning(f"Rate limit error ({rate_limit_errors}/{max_rate_limit_errors}), consecutive: {consecutive_rate_limit_errors}")
+                    
+                    if rate_limit_errors >= max_rate_limit_errors or consecutive_rate_limit_errors >= max_consecutive_rate_limit_errors:
+                        logger.warning("Rate limit threshold reached. Stopping embedding generation.")
+                        rate_limited = True
+                    else:
+                        # Add exponential backoff between retries for rate limits with longer delays
+                        wait_time = 10 * (2 ** (consecutive_rate_limit_errors - 1))  # 10, 20, 40 seconds
+                        logger.info(f"Waiting {wait_time} seconds before continuing...")
+                        time.sleep(wait_time)
+                        # Don't advance the batch on first consecutive error, but do on subsequent ones
+                        if consecutive_rate_limit_errors == 1:
+                            continue
+                
+                # Add current batch to failed texts
+                failed_texts.extend(batch_texts)
+                
+                # For rate limit errors with threshold reached, also add all remaining texts
+                if is_rate_limit and rate_limited:
+                    failed_texts.extend(texts[batch_end:])
+                    logger.warning(f"Rate limit threshold exceeded. Stopping after processing {len(successful_embeddings)} embeddings.")
+                    break
+                else:
+                    # For other errors, log and continue to next batch
+                    logger.error(f"Error generating embeddings for batch: {str(e)}")
+            
+            # Advance to next batch
+            batch_start = batch_end
+        
+        # Clean up the skip_retries flag
+        if hasattr(self, '_skip_retries'):
+            delattr(self, '_skip_retries')
+        
+        success_count = len(successful_embeddings)
+        failure_count = len(failed_texts)
+        completed = (success_count + failure_count) >= len(texts)
+        
+        logger.info(f"Embedding generation summary: {success_count} successful, {failure_count} failed")
+        
+        return {
+            "embeddings": successful_embeddings,
+            "failed_texts": failed_texts,
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "completed": completed and not rate_limited
+        }
 
 
 def create_embeddings_generator(
