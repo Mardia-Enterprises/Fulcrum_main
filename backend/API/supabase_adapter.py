@@ -72,13 +72,13 @@ def _get_embedding(text):
         logger.error(f"Error generating embedding: {str(e)}")
         raise
 
-def query_index(query_text, top_k=5, match_threshold=0.01):
+def query_index(query_text, top_k=100, match_threshold=0.01):
     """
     Query the vector store using text and return the top k most similar documents.
     
     Args:
         query_text: The query text to search for
-        top_k: The number of documents to return (default: 5)
+        top_k: The number of documents to return (default: 100)
         match_threshold: The minimum similarity score to consider a match (default: 0.01)
         
     Returns:
@@ -88,7 +88,7 @@ def query_index(query_text, top_k=5, match_threshold=0.01):
         initialize_supabase()
     
     try:
-        logger.info(f"Querying Supabase for: {query_text} (top_k={top_k}, threshold={match_threshold})")
+        logger.info(f"Querying Supabase for: '{query_text}' (top_k={top_k}, threshold={match_threshold})")
         
         # Generate embedding for the query
         query_embedding = _get_embedding(query_text)
@@ -114,23 +114,59 @@ def query_index(query_text, top_k=5, match_threshold=0.01):
         for item in result.data:
             resume_data = item.get('resume_data', {})
             
-            # Extract relevant information from resume_data with proper field names
+            # Handle the capitalization variations in field names
+            name = None
+            # Try different capitalization patterns for name
+            if 'name' in resume_data:
+                name = resume_data['name']
+            elif 'Name' in resume_data:
+                name = resume_data['Name']
+            else:
+                # Use ID as fallback
+                name = item.get('id', '').replace('_', ' ').title()
+            
+            # Extract role field considering different capitalization
+            role = None
+            if 'role' in resume_data:
+                role = resume_data['role']
+            elif 'Role' in resume_data:
+                role = resume_data['Role']
+            elif 'Role in Contract' in resume_data:
+                role = resume_data['Role in Contract']
+            else:
+                role = []
+            
+            # Log extracted fields for debugging
+            logger.info(f"Extracted employee: {name} with role: {role}")
+            
+            # Extract relevant information from resume_data with proper field names and fallbacks
             employee_info = {
                 'id': item.get('id', ''),
-                'name': resume_data.get('name', 'Unknown'),  # Use lowercase 'name' instead of 'Name'
-                'role': resume_data.get('role', []),  # Use lowercase 'role' which is a list
-                'education': resume_data.get('education', []),
-                'years_experience': resume_data.get('years_experience', 'Not provided'),
-                'firm_name_and_location': resume_data.get('firm_name_and_location', []),
-                'current_professional_registration': resume_data.get('current_professional_registration', []),
-                'other_professional_qualifications': resume_data.get('other_professional_qualifications', []),
-                'relevant_projects': resume_data.get('relevant_projects', []),
+                'name': name,
+                'role': role,
+                'education': resume_data.get('education', resume_data.get('Education', [])),
+                'years_experience': resume_data.get('years_experience', 
+                                       resume_data.get('Years of Experience', 
+                                       resume_data.get('years of experience', 'Not provided'))),
+                'firm_name_and_location': resume_data.get('firm_name_and_location', 
+                                         resume_data.get('Firm Name & Location', {})),
+                'current_professional_registration': resume_data.get('current_professional_registration', 
+                                                   resume_data.get('Professional Registrations', [])),
+                'other_professional_qualifications': resume_data.get('other_professional_qualifications', 
+                                                  resume_data.get('Other Professional Qualifications', '')),
+                'relevant_projects': resume_data.get('relevant_projects', 
+                                    resume_data.get('Relevant Projects', [])),
                 'score': item.get('similarity', 0)
             }
             
             matches.append(employee_info)
         
         logger.info(f"Found {len(matches)} matches")
+        if matches:
+            # Log the first match details for debugging
+            first_match = matches[0]
+            logger.info(f"Best match: {first_match.get('name')} with score {first_match.get('score')}")
+        
         return matches
     
     except Exception as e:
@@ -148,9 +184,11 @@ def fetch_vectors(ids):
         An object with vectors that include id, metadata, and values
     """
     if not supabase:
-        raise ValueError("Supabase client not initialized")
+        initialize_supabase()
     
     try:
+        logger.info(f"Fetching vectors from Supabase for IDs: {ids}")
+        
         # Fetch vectors by ID
         result = supabase.table('employees').select('*').in_('id', ids).execute()
         
@@ -158,27 +196,63 @@ def fetch_vectors(ids):
             logger.error(f"Error fetching vectors from Supabase: {result.error}")
             raise Exception(f"Supabase fetch error: {result.error}")
         
+        logger.info(f"Fetched {len(result.data)} records from Supabase")
+        
+        # Detailed logging of raw data for debugging
+        if result.data:
+            logger.info(f"Raw data for first record: {json.dumps(result.data[0], indent=2)}")
+        
         # Format results to match Pinecone's response structure
         vectors = {}
         for item in result.data:
+            # Log the current item being processed
+            item_id = item.get('id', '')
+            logger.info(f"Processing vector with ID: {item_id}")
+            
+            # Extract resume_data for better logs
+            resume_data = item.get('resume_data', {})
+            logger.info(f"Resume data for {item_id}: {json.dumps(resume_data, indent=2)}")
+            
+            # Check if resume_data is a string that needs parsing
+            if isinstance(resume_data, str):
+                try:
+                    resume_data = json.loads(resume_data)
+                    logger.info("Parsed resume_data from string to JSON")
+                except Exception as e:
+                    logger.error(f"Failed to parse resume_data string: {e}")
+            
+            name = resume_data.get('Name', resume_data.get('name', 'Unknown'))
+            logger.info(f"Vector contains employee: {name}")
+            
+            # Store the actual resume_data as string for debugging
+            resume_data_str = json.dumps(resume_data)
+            
             vector = {
-                'id': item.get('id', ''),
+                'id': item_id,
                 'metadata': {
-                    'resume_data': json.dumps(item.get('resume_data', {})),
-                    'employee_name': item.get('employee_name', ''),
+                    'resume_data': resume_data_str,
+                    'employee_name': item.get('employee_name', name),
                     'file_id': item.get('file_id', '')
                 },
                 'values': item.get('embedding', [])
             }
-            vectors[item.get('id', '')] = type('Vector', (), vector)  # Convert to object with attributes
+            vectors[item_id] = type('Vector', (), vector)  # Convert to object with attributes
         
         # Create a result object similar to Pinecone's
         result_obj = type('FetchResult', (), {'vectors': vectors})
+        
+        if not vectors:
+            logger.warning(f"No vectors found for IDs: {ids}")
+        else:
+            logger.info(f"Successfully processed {len(vectors)} vectors")
+        
         return result_obj
         
     except Exception as e:
         logger.error(f"Error during Supabase fetch: {str(e)}")
-        raise
+        # Return empty result rather than raising, to make the API more resilient
+        empty_result = type('FetchResult', (), {'vectors': {}})
+        return empty_result
 
 def delete_vectors(ids):
     """

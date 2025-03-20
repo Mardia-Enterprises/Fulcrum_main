@@ -30,14 +30,25 @@ class EmployeeResponse(BaseModel):
 class EmployeeDetail(BaseModel):
     """Detailed employee information"""
     name: str
-    role: Optional[str] = None
-    years_experience: Optional[Dict[str, Any]] = None
-    firm: Optional[Dict[str, Any]] = None
-    education: Optional[Any] = None
-    professional_registrations: Optional[List[Dict[str, Any]]] = None
-    other_qualifications: Optional[str] = None
-    relevant_projects: Optional[List[Dict[str, Any]]] = None
-    file_id: Optional[List[str]] = None
+    role: Optional[Union[str, List[str]]] = None
+    years_experience: Optional[Union[Dict[str, Any], str, Any]] = None
+    firm: Optional[Union[Dict[str, Any], str, Any]] = None
+    education: Optional[Union[List[Dict[str, Any]], List[str], str, Any]] = None
+    professional_registrations: Optional[Union[List[Dict[str, Any]], List[str], str, Any]] = None
+    other_qualifications: Optional[Union[str, Any]] = None
+    relevant_projects: Optional[Union[List[Dict[str, Any]], List[str], Any]] = None
+    file_id: Optional[Union[List[str], str, Any]] = None
+    
+    class Config:
+        """Configuration for the model"""
+        # Allow arbitrary types for fields
+        arbitrary_types_allowed = True
+        # Populate models with the name of fields from aliases
+        orm_mode = True
+        # Prevent validation errors for empty fields
+        validate_assignment = False
+        # Make fields optional
+        extra = "allow"
 
 class EmployeeList(BaseModel):
     """List of employees"""
