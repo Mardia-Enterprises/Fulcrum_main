@@ -40,8 +40,11 @@ export default function TeamsPage() {
   const [showDeleteInput, setShowDeleteInput] = useState(false)
   const [showGetInput, setShowGetInput] = useState(false)
   const [showMergeForm, setShowMergeForm] = useState(false)
+  const [showRoleFilter, setShowRoleFilter] = useState(false)
+  const [roleToFilter, setRoleToFilter] = useState<string>('')
   const [sourceEmployee, setSourceEmployee] = useState<string>('')
   const [targetEmployee, setTargetEmployee] = useState<string>('')
+  const [searchQuery, setSearchQuery] = useState<string>('')
   const [actionMessage, setActionMessage] = useState<{type: 'success' | 'error', text: string} | null>(null)
   const [employeeDetails, setEmployeeDetails] = useState<EmployeeDetail | null>(null)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
@@ -224,6 +227,105 @@ export default function TeamsPage() {
     }
   }
 
+  const handleSearchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!searchQuery.trim()) return
+    
+    try {
+      setActionMessage(null)
+      setLoading(true)
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      
+      const response = await fetch(`${apiUrl}/api/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: searchQuery
+        }),
+      })
+      
+      if (!response.ok) throw new Error(`Search failed: ${response.status}`)
+      
+      const data = await response.json()
+      console.log('Search results:', data)
+      
+      // Extract employees from the response
+      const employeeList = data.employees || data.results || data
+      
+      if (Array.isArray(employeeList) && employeeList.length > 0) {
+        const mapped = employeeList.map((emp: any) => ({
+          id: emp.id || emp.employee_name || emp.name,
+          name: emp.employee_name || emp.name || 'Unknown',
+          role: emp.role || (emp.resume_data && emp.resume_data.Role) || 'Employee'
+        }))
+        
+        setEmployees(mapped)
+        setActionMessage({type: 'success', text: `Found ${mapped.length} employees matching your query`})
+        setError(null)
+      } else {
+        setEmployees([])
+        setActionMessage({type: 'error', text: 'No employees found matching your query'})
+      }
+    } catch (err: any) {
+      console.error('Error searching employees:', err)
+      setActionMessage({type: 'error', text: `Search failed: ${err.message}`})
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const filterByRole = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!roleToFilter) return
+    
+    try {
+      setActionMessage(null)
+      setLoading(true)
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      
+      const response = await fetch(`${apiUrl}/api/roles/${encodeURIComponent(roleToFilter)}`, {
+        method: 'GET',
+      })
+      
+      if (!response.ok) throw new Error(`Role filter failed: ${response.status}`)
+      
+      const data = await response.json()
+      console.log('Role filter results:', data)
+      
+      // Extract employees from the response
+      const employeeList = data.employees || data
+      
+      if (Array.isArray(employeeList) && employeeList.length > 0) {
+        const mapped = employeeList.map((emp: any) => ({
+          id: emp.id || emp.employee_name || emp.name,
+          name: emp.employee_name || emp.name || 'Unknown',
+          role: emp.role || (emp.resume_data && emp.resume_data.Role) || roleToFilter
+        }))
+        
+        setEmployees(mapped)
+        setActionMessage({type: 'success', text: `Found ${mapped.length} employees with role "${roleToFilter}"`})
+        setError(null)
+        setShowRoleFilter(false)
+        setRoleToFilter('')
+      } else {
+        setEmployees([])
+        setActionMessage({type: 'error', text: `No employees found with role "${roleToFilter}"`})
+      }
+    } catch (err: any) {
+      console.error('Error filtering by role:', err)
+      setActionMessage({type: 'error', text: `Role filter failed: ${err.message}`})
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const resetSearch = () => {
+    setSearchQuery('')
+    fetchEmployees()
+  }
+
   return (
     <main className="py-10 lg:pl-72">
       <div className="px-4 sm:px-6 lg:px-8">
@@ -236,6 +338,7 @@ export default function TeamsPage() {
                 setShowDeleteInput(false)
                 setShowGetInput(false)
                 setShowMergeForm(false)
+                setShowRoleFilter(false)
               }}
               className="rounded-sm bg-indigo-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
             >
@@ -249,6 +352,7 @@ export default function TeamsPage() {
                 setShowFileUpload(false)
                 setShowDeleteInput(false)
                 setShowMergeForm(false)
+                setShowRoleFilter(false)
               }}
               className="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
             >
@@ -262,6 +366,7 @@ export default function TeamsPage() {
                 setShowFileUpload(false)
                 setShowGetInput(false)
                 setShowMergeForm(false)
+                setShowRoleFilter(false)
               }}
               className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
             >
@@ -275,10 +380,25 @@ export default function TeamsPage() {
                 setShowFileUpload(false)
                 setShowDeleteInput(false)
                 setShowGetInput(false)
+                setShowRoleFilter(false)
               }}
               className="rounded-md bg-amber-600 px-2.5 py-1.5 text-sm font-semibold text-white shadow-xs hover:bg-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
             >
               Merge Employees
+            </button>
+            
+            <button
+              type="button"
+              onClick={() => {
+                setShowRoleFilter(!showRoleFilter)
+                setShowFileUpload(false)
+                setShowDeleteInput(false)
+                setShowGetInput(false)
+                setShowMergeForm(false)
+              }}
+              className="rounded-md bg-emerald-600 px-2 py-1 text-sm font-semibold text-white shadow-xs hover:bg-emerald-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+            >
+              Role
             </button>
           </div>
           
@@ -407,11 +527,72 @@ export default function TeamsPage() {
             </form>
           )}
           
+          {showRoleFilter && (
+            <form onSubmit={filterByRole} className="bg-white p-4 rounded-md shadow">
+              <div className="mb-4">
+                <label htmlFor="role-filter" className="block text-sm font-medium text-gray-700">
+                  Role to Filter By
+                </label>
+                <input
+                  id="role-filter"
+                  name="role-filter"
+                  type="text"
+                  value={roleToFilter}
+                  onChange={(e) => setRoleToFilter(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  placeholder="Enter role (e.g. Civil Engineer)"
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={!roleToFilter}
+                  className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:opacity-50"
+                >
+                  Filter
+                </button>
+              </div>
+            </form>
+          )}
+          
           {actionMessage && (
             <div className={`p-4 rounded-md ${actionMessage.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
               {actionMessage.text}
             </div>
           )}
+          
+          {/* Search bar */}
+          <div className="mt-6">
+            <form onSubmit={handleSearchSubmit} className="flex space-x-2">
+              <div className="flex-1">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search employees by skills, experience, projects..."
+                  className="block w-full rounded-md border-0 py-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                />
+              </div>
+              <div className="flex space-x-2">
+                <button
+                  type="submit"
+                  disabled={!searchQuery.trim()}
+                  className="rounded-md bg-indigo-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50"
+                >
+                  Search
+                </button>
+                {employees.length > 0 && searchQuery && (
+                  <button
+                    type="button"
+                    onClick={resetSearch}
+                    className="rounded-md bg-gray-200 px-3.5 py-2.5 text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-300"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
         </div>
         
         {showDetailsModal && employeeDetails && (

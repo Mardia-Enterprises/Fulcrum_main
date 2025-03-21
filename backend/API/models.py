@@ -26,6 +26,7 @@ class EmployeeResponse(BaseModel):
     education: Any
     years_experience: Any = None
     relevant_projects: List[Any]
+    matching_project_info: Optional[Dict[str, Any]] = None
 
 class EmployeeDetail(BaseModel):
     """Detailed employee information"""

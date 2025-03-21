@@ -70,4 +70,30 @@ BEGIN
   WHERE employees.employee_name ILIKE '%' || name_query || '%'
   ORDER BY employees.employee_name;
 END;
+$$;
+
+-- Create a function for text search in resume data
+CREATE OR REPLACE FUNCTION search_employees_text(search_query text)
+RETURNS TABLE (
+  id TEXT,
+  employee_name TEXT,
+  file_id TEXT,
+  resume_data JSONB,
+  similarity FLOAT
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    employees.id,
+    employees.employee_name,
+    employees.file_id,
+    employees.resume_data,
+    0.8 AS similarity  -- Default similarity score for text matches
+  FROM employees
+  WHERE 
+    -- Search in the resume_data jsonb using to_tsvector
+    to_tsvector('english', employees.resume_data::text) @@ plainto_tsquery('english', search_query);
+END;
 $$; 

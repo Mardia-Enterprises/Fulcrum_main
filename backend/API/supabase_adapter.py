@@ -33,10 +33,74 @@ def initialize_supabase():
     
     return create_client(supabase_url, supabase_key)
 
+def ensure_text_search_function():
+    """
+    Ensures the text search function exists in Supabase.
+    This function is called during initialization to create the function if it doesn't exist.
+    """
+    if not supabase:
+        return
+    
+    try:
+        logger.info("Checking for text search function in Supabase")
+        
+        # SQL for creating the text search function
+        sql = """
+        -- Function to search for employees using text search
+        CREATE OR REPLACE FUNCTION search_employees_text(search_query text)
+        RETURNS TABLE (
+          id TEXT,
+          employee_name TEXT,
+          file_id TEXT,
+          resume_data JSONB,
+          similarity FLOAT
+        )
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          RETURN QUERY
+          SELECT
+            employees.id,
+            employees.employee_name,
+            employees.file_id,
+            employees.resume_data,
+            0.8 AS similarity  -- Default similarity score for text matches
+          FROM employees
+          WHERE 
+            -- Search in the resume_data jsonb using to_tsvector
+            to_tsvector('english', employees.resume_data::text) @@ plainto_tsquery('english', search_query);
+        END;
+        $$;
+        """
+        
+        # Execute the SQL to create the function
+        result = supabase.rpc('exec_sql', {'query': sql}).execute()
+        
+        if hasattr(result, 'error') and result.error:
+            logger.error(f"Error creating text search function: {result.error}")
+            
+            # Try a simpler approach if the exec_sql RPC fails
+            try:
+                # Execute raw SQL (this requires higher permissions)
+                supabase.postgrest.schema('public').execute(sql)
+                logger.info("Created text search function using raw SQL")
+            except Exception as inner_e:
+                logger.error(f"Failed to create text search function with raw SQL: {str(inner_e)}")
+                logger.warning("Continuing without text search function - some queries may not work optimally")
+        else:
+            logger.info("Successfully created or updated text search function")
+    
+    except Exception as e:
+        logger.error(f"Error ensuring text search function: {str(e)}")
+        logger.warning("Continuing without text search function - some queries may not work optimally")
+
 # Initialize Supabase client
 try:
     supabase = initialize_supabase()
     logger.info("Supabase client initialized successfully")
+    
+    # Ensure text search function exists
+    ensure_text_search_function()
 except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {str(e)}")
     supabase = None
@@ -90,10 +154,17 @@ def query_index(query_text, top_k=100, match_threshold=0.01):
     try:
         logger.info(f"Querying Supabase for: '{query_text}' (top_k={top_k}, threshold={match_threshold})")
         
+        # Check if query is about a specific project
+        is_project_query = "project" in query_text.lower() or "worked on" in query_text.lower()
+        
         # Generate embedding for the query
         query_embedding = _get_embedding(query_text)
         logger.info(f"Generated embedding with length: {len(query_embedding)}")
         
+        # Use a lower threshold for project queries to get more potential matches
+        if is_project_query:
+            match_threshold = 0.001  # Use much lower threshold for project queries
+            
         # Query Supabase using the match_employees function
         logger.info(f"Sending query to Supabase with threshold: {match_threshold}")
         result = supabase.rpc(
@@ -136,6 +207,15 @@ def query_index(query_text, top_k=100, match_threshold=0.01):
             else:
                 role = []
             
+            # Extract relevant projects with different capitalization patterns
+            relevant_projects = []
+            if 'relevant_projects' in resume_data:
+                relevant_projects = resume_data['relevant_projects']
+            elif 'Relevant Projects' in resume_data:
+                relevant_projects = resume_data['Relevant Projects']
+            elif 'relevant projects' in resume_data:
+                relevant_projects = resume_data['relevant projects']
+            
             # Log extracted fields for debugging
             logger.info(f"Extracted employee: {name} with role: {role}")
             
@@ -154,12 +234,101 @@ def query_index(query_text, top_k=100, match_threshold=0.01):
                                                    resume_data.get('Professional Registrations', [])),
                 'other_professional_qualifications': resume_data.get('other_professional_qualifications', 
                                                   resume_data.get('Other Professional Qualifications', '')),
-                'relevant_projects': resume_data.get('relevant_projects', 
-                                    resume_data.get('Relevant Projects', [])),
+                'relevant_projects': relevant_projects,
                 'score': item.get('similarity', 0)
             }
             
+            # If specifically querying for projects, do additional project name matching
+            if is_project_query:
+                # Extract the project name from the query by removing common words
+                project_keywords = query_text.lower()
+                project_keywords = project_keywords.replace("project", "").replace("worked on", "")
+                project_keywords = project_keywords.replace("employees who have", "").replace("who have", "")
+                project_keywords = project_keywords.strip()
+                
+                # Split into individual words for partial matching
+                project_keyword_parts = [part.strip() for part in project_keywords.split() if len(part.strip()) > 2]
+                
+                # Check if any of the employee's projects match the project name in the query
+                project_match = False
+                project_match_score = 0
+                matched_project_details = None
+                
+                for project in relevant_projects:
+                    # Initialize an empty project text for searching
+                    project_text = ""
+                    project_title = ""
+                    project_details = {}
+                    
+                    # Handle different project formats
+                    if isinstance(project, dict):
+                        # Collect all text from the project for searching
+                        project_text = " ".join(str(v).lower() for v in project.values())
+                        
+                        # Try different field names for project title
+                        if "Title and Location" in project:
+                            project_title = project["Title and Location"]
+                            project_details = project.copy()
+                        elif "title" in project:
+                            project_title = project["title"]
+                            project_details = project.copy()
+                        elif "Title" in project:
+                            project_title = project["Title"]
+                            project_details = project.copy()
+                        elif "Name" in project:
+                            project_title = project["Name"]
+                            project_details = project.copy()
+                        elif "Project" in project:
+                            project_title = project["Project"]
+                            project_details = project.copy()
+                    elif isinstance(project, str):
+                        project_text = project.lower()
+                        project_title = project
+                        project_details = {"Title": project}
+                    
+                    # Try exact phrase matching first
+                    if project_keywords.lower() in project_text:
+                        project_match = True
+                        project_match_score = 1.0  # Perfect match
+                        matched_project_details = project_details
+                        logger.info(f"Exact project match found for {name}: {project_title}")
+                        break
+                    
+                    # Try partial matching with the project keywords
+                    matches_count = 0
+                    for keyword in project_keyword_parts:
+                        if keyword in project_text:
+                            matches_count += 1
+                    
+                    # Calculate match percentage
+                    if project_keyword_parts and matches_count > 0:
+                        match_percentage = matches_count / len(project_keyword_parts)
+                        
+                        # If we have a better match than before, update
+                        if match_percentage > project_match_score:
+                            project_match = True
+                            project_match_score = match_percentage
+                            matched_project_details = project_details
+                            logger.info(f"Partial project match ({match_percentage:.2f}) found for {name}: {project_title}")
+                
+                # Boost score based on project match quality
+                if project_match:
+                    # Boost the score based on match quality
+                    boost_factor = 1 + project_match_score * 2  # Up to 3x boost for perfect match
+                    employee_info['score'] *= boost_factor
+                    employee_info['project_match_score'] = project_match_score
+                    employee_info['matched_project'] = matched_project_details
+                    logger.info(f"Boosting score for {name} by factor {boost_factor} (new score: {employee_info['score']})")
+                else:
+                    # Only include this employee if the similarity score is decent
+                    # Using a much lower threshold since we're already filtering by match_threshold in the query
+                    if employee_info['score'] < 0.1:
+                        continue
+            
             matches.append(employee_info)
+        
+        # Sort matches by score
+        matches = sorted(matches, key=lambda x: x['score'], reverse=True)
         
         logger.info(f"Found {len(matches)} matches")
         if matches:
