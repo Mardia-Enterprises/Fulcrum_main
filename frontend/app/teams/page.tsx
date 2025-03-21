@@ -348,34 +348,6 @@ export default function TeamsPage() {
             <button
               type="button"
               onClick={() => {
-                setShowGetInput(!showGetInput)
-                setShowFileUpload(false)
-                setShowDeleteInput(false)
-                setShowMergeForm(false)
-                setShowRoleFilter(false)
-              }}
-              className="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
-            >
-              Get Employee
-            </button>
-            
-            <button
-              type="button"
-              onClick={() => {
-                setShowDeleteInput(!showDeleteInput)
-                setShowFileUpload(false)
-                setShowGetInput(false)
-                setShowMergeForm(false)
-                setShowRoleFilter(false)
-              }}
-              className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
-            >
-              Delete Employee
-            </button>
-            
-            <button
-              type="button"
-              onClick={() => {
                 setShowMergeForm(!showMergeForm)
                 setShowFileUpload(false)
                 setShowDeleteInput(false)
@@ -424,62 +396,6 @@ export default function TeamsPage() {
                   className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50"
                 >
                   Upload
-                </button>
-              </div>
-            </form>
-          )}
-          
-          {showDeleteInput && (
-            <form onSubmit={deleteEmployee} className="bg-white p-4 rounded-md shadow">
-              <div className="mb-4">
-                <label htmlFor="employee-name" className="block text-sm font-medium text-gray-700">
-                  Employee Name to Delete
-                </label>
-                <input
-                  id="employee-name"
-                  name="employee-name"
-                  type="text"
-                  value={employeeToDelete}
-                  onChange={(e) => setEmployeeToDelete(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                  placeholder="Enter exact employee name"
-                />
-              </div>
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={!employeeToDelete}
-                  className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              </div>
-            </form>
-          )}
-          
-          {showGetInput && (
-            <form onSubmit={getEmployeeDetails} className="bg-white p-4 rounded-md shadow">
-              <div className="mb-4">
-                <label htmlFor="employee-name-get" className="block text-sm font-medium text-gray-700">
-                  Employee Name to Retrieve
-                </label>
-                <input
-                  id="employee-name-get"
-                  name="employee-name-get"
-                  type="text"
-                  value={employeeToGet}
-                  onChange={(e) => setEmployeeToGet(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                  placeholder="Enter exact employee name"
-                />
-              </div>
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={!employeeToGet}
-                  className="rounded-md bg-gray-900 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 disabled:opacity-50"
-                >
-                  Get Details
                 </button>
               </div>
             </form>
@@ -798,10 +714,43 @@ export default function TeamsPage() {
             {employees.map((employee) => (
               <div 
                 key={employee.id || employee.name} 
-                className="bg-white shadow-md rounded-lg p-6 hover:shadow-lg transition-shadow cursor-pointer"
-                onClick={() => handleEmployeeCardClick(employee)}
+                className="bg-white shadow-md rounded-lg p-6 hover:shadow-lg transition-shadow cursor-pointer relative"
               >
-                <div className="flex flex-col items-center">
+                <div 
+                  className="absolute top-3 right-3 text-red-600 hover:text-red-800 z-10"
+                  onClick={(e) => {
+                    e.stopPropagation(); // Prevent card click
+                    setEmployeeToDelete(employee.name);
+                    const confirmed = window.confirm(`Are you sure you want to delete ${employee.name}?`);
+                    if (confirmed) {
+                      (async () => {
+                        try {
+                          setActionMessage(null);
+                          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+                          
+                          const response = await fetch(`${apiUrl}/api/employees/${encodeURIComponent(employee.name)}`, {
+                            method: 'DELETE',
+                          });
+                          
+                          if (!response.ok) throw new Error(`Delete failed: ${response.status}`);
+                          
+                          setActionMessage({type: 'success', text: 'Employee deleted successfully'});
+                          fetchEmployees(); // Refresh the list
+                        } catch (err: any) {
+                          setActionMessage({type: 'error', text: `Error deleting employee: ${err.message}`});
+                        }
+                      })();
+                    }
+                  }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </div>
+                <div 
+                  className="flex flex-col items-center"
+                  onClick={() => handleEmployeeCardClick(employee)}
+                >
                   <div className="h-20 w-20 rounded-full bg-indigo-100 flex items-center justify-center mb-4">
                     <span className="text-2xl text-indigo-600 font-medium">
                       {employee.name.split(' ').map(n => n[0]).join('')}
