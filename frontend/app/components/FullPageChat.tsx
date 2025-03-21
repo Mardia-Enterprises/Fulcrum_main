@@ -15,6 +15,7 @@ interface Message {
   metadata?: { 
     usingFallback?: boolean;
     fileReferences?: string[];
+    fileContents?: Record<string, string>;
   };
 }
 
@@ -224,14 +225,28 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
           });
         }
         
-        // Then try to extract from "Result X (Score: Y)" format
-        if (fileReferences.length === 0) {
-          const resultLines = response.fullOutput.split('\n');
-          for (let i = 0; i < resultLines.length; i++) {
-            const line = resultLines[i];
-            if (line.match(/^Result \d+ \(Score: [\d.]+\)$/i) && i + 1 < resultLines.length) {
-              const nextLine = resultLines[i + 1].trim();
-              if (nextLine && nextLine.endsWith('.pdf')) {
+        // Then try to extract from "Result X (Score: Y)" format with associated text
+        const resultLines = response.fullOutput.split('\n');
+        const fileRefMap = new Map<string, string>();
+        
+        for (let i = 0; i < resultLines.length; i++) {
+          const line = resultLines[i].trim();
+          
+          // Look for result lines with score
+          if (line.match(/^Result \d+ \(Score: [\d.]+\)$/i) && i + 1 < resultLines.length) {
+            const nextLine = resultLines[i + 1].trim();
+            
+            // If next line is a PDF filename
+            if (nextLine && nextLine.endsWith('.pdf')) {
+              // Check if followed by Text: line
+              let textContent = '';
+              if (i + 2 < resultLines.length && resultLines[i + 2].trim().startsWith('Text:')) {
+                textContent = resultLines[i + 2].trim().substring(5).trim();
+                fileRefMap.set(nextLine, textContent);
+              }
+              
+              // Add to file references if not already there
+              if (!fileReferences.includes(nextLine)) {
                 fileReferences.push(nextLine);
               }
             }
@@ -240,31 +255,34 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
         
         // Remove duplicates
         fileReferences = Array.from(new Set(fileReferences));
-      }
-      
-      // Clean up the response text
-      formattedAnswer = formattedAnswer
-        .replace(/^```\s*|\s*```$/g, '') // Remove code blocks if present
-        .trim();
         
-      // Add system response to chat
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: formattedAnswer,
-        timestamp: new Date(),
-        isUser: false,
-        text: formattedAnswer,
-        metadata: {
+        // Store the text content in the metadata
+        const metadata = {
           usingFallback: response.usingFallback ? true : false,
-          fileReferences: fileReferences
-        }
-      };
-      
-      const finalMessages = [...updatedMessages, assistantMessage];
-      setMessages(finalMessages);
-      updateSessionMessages(currentSessionId, finalMessages);
-      
+          fileReferences: fileReferences,
+          fileContents: Object.fromEntries(fileRefMap)
+        };
+        
+        // Clean up the response text
+        formattedAnswer = formattedAnswer
+          .replace(/^```\s*|\s*```$/g, '') // Remove code blocks if present
+          .trim();
+        
+        // Add system response to chat with the enhanced metadata
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: formattedAnswer,
+          timestamp: new Date(),
+          isUser: false,
+          text: formattedAnswer,
+          metadata
+        };
+        
+        const finalMessages = [...updatedMessages, assistantMessage];
+        setMessages(finalMessages);
+        updateSessionMessages(currentSessionId, finalMessages);
+      }
     } catch (err) {
       console.error('Error in RAG search:', err);
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
@@ -421,6 +439,7 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
                         const content = message.text || message.content;
                         const lines = content.split('\n');
                         const fileReferences = message.metadata?.fileReferences || [];
+                        const fileContents = message.metadata?.fileContents || {};
                         
                         // Find where enhanced results start
                         const enhancedIndex = lines.findIndex(line => 
@@ -455,6 +474,7 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
                               
                               // If we hit raw search results, stop processing enhanced results
                               if (line.includes('Raw Search Results:') || 
+                                  line.includes('Found') && line.includes('results') ||
                                   (line.match(/^Result \d+ \(Score: [\d.]+\)$/) && i < lines.length - 1 && lines[i+1].endsWith('.pdf'))) {
                                 break;
                               }
@@ -498,8 +518,8 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
                             }
                           }
                           
-                          // Add reference links from file references
-                          if (fileReferences.length > 0) {
+                          // Add reference links section
+                          if (fileReferences.length > 0 || rawSearchIndex !== -1) {
                             // Add the "References:" heading
                             referenceLinks.push(
                               <div key="ref-heading" className="font-semibold mt-4 mb-2">
@@ -507,30 +527,91 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
                               </div>
                             );
                             
-                            // Add each file reference as a link to try all three buckets
+                            // Map to store file references and their corresponding text
+                            const fileReferencesMap = new Map();
+                            
+                            // First use the fileContents from metadata if available
+                            for (const [fileName, content] of Object.entries(fileContents)) {
+                              fileReferencesMap.set(fileName, content);
+                            }
+                            
+                            // If we have raw search results and still missing some text content, extract it
+                            if (rawSearchIndex !== -1) {
+                              let i = rawSearchIndex;
+                              
+                              // Skip the "Raw Search Results:" line
+                              if (lines[i].includes('Raw Search Results:') || (lines[i].includes('Found') && lines[i].includes('results'))) {
+                                i++;
+                              }
+                              
+                              // Process each result set (Result X, filename, Text: content)
+                              while (i < lines.length) {
+                                const line = lines[i];
+                                
+                                // If this is a result line with a score
+                                if (line.match(/^Result \d+ \(Score: [\d.]+\)$/)) {
+                                  const resultNum = line.match(/^Result (\d+)/)?.[1] || '?';
+                                  
+                                  // Get the filename (next line)
+                                  if (i + 1 < lines.length && lines[i+1].trim() && lines[i+1].endsWith('.pdf')) {
+                                    const fileName = lines[i+1].trim();
+                                    
+                                    // Only process if we don't already have content for this file
+                                    if (!fileReferencesMap.has(fileName)) {
+                                      // Get the text content (typically after "Text:" line)
+                                      let textContent = '';
+                                      if (i + 2 < lines.length && lines[i+2].startsWith('Text:')) {
+                                        textContent = lines[i+2].substring(5).trim();
+                                        fileReferencesMap.set(fileName, textContent);
+                                      }
+                                    }
+                                    
+                                    // Move to the next result set
+                                    i += 3;
+                                  } else {
+                                    i++;
+                                  }
+                                } else {
+                                  i++;
+                                }
+                              }
+                            }
+                            
+                            // Add each file reference as a link with its text
                             fileReferences.forEach((fileName, index) => {
-                              // Create separate links for each bucket
+                              // Get the text content if available
+                              const textContent = fileReferencesMap.get(fileName) || '';
+                              
+                              // Clean up the filename - make sure to remove any "File:" prefix
+                              const cleanFileName = fileName.replace(/^File:\s*/i, '').trim();
+                              
+                              // Create the link element with text
                               const buckets = ["pdf-docs", "section-e-resumes", "section-f-resumes"];
                               
                               referenceLinks.push(
-                                <div key={`ref-${index}`} className="ml-4 text-blue-600 hover:underline mb-2">
-                                  {buckets.map((bucket, bucketIndex) => (
-                                    <a 
-                                      key={`${bucket}-${index}`}
-                                      href={`https://khqwfkvnwtovvcbidwnl.supabase.co/storage/v1/object/public/${bucket}/${encodeURIComponent(fileName)}`}
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
-                                      className={bucketIndex > 0 ? "ml-3" : ""}
-                                      onClick={(e) => {
-                                        // Prevent default to handle click manually
-                                        e.preventDefault();
-                                        // Open the link in a new tab
-                                        window.open(`https://khqwfkvnwtovvcbidwnl.supabase.co/storage/v1/object/public/${bucket}/${encodeURIComponent(fileName)}`, '_blank');
-                                      }}
-                                    >
-                                      {bucketIndex === 0 ? fileName : `[${bucket.split('-')[0]}]`}
-                                    </a>
-                                  ))}
+                                <div key={`ref-${index}`} className="ml-4 mb-3">
+                                  <div className="text-blue-600 hover:underline">
+                                    {buckets.map((bucket, bucketIndex) => (
+                                      <a 
+                                        key={`${bucket}-${index}`}
+                                        href={`https://khqwfkvnwtovvcbidwnl.supabase.co/storage/v1/object/public/${bucket}/${encodeURIComponent(cleanFileName)}`}
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className={bucketIndex > 0 ? "ml-3" : ""}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          window.open(`https://khqwfkvnwtovvcbidwnl.supabase.co/storage/v1/object/public/${bucket}/${encodeURIComponent(cleanFileName)}`, '_blank');
+                                        }}
+                                      >
+                                        {bucketIndex === 0 ? cleanFileName : `[${bucket.split('-')[0]}]`}
+                                      </a>
+                                    ))}
+                                  </div>
+                                  {textContent && (
+                                    <div className="text-gray-700 mt-1 text-sm">
+                                      {textContent}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             });
