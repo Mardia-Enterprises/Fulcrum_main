@@ -185,4 +185,59 @@ export const searchEmployees = async (query: string): Promise<Employee[]> => {
     console.error('Error searching employees:', error);
     throw error;
   }
+};
+
+// RAG search using vector_search_mistral
+export interface RagSearchResponse {
+  answer: string;
+  fullOutput?: string;
+  succeeded: boolean;
+  usingFallback?: boolean;
+  error?: string;
+  details?: string;
+}
+
+export const ragSearch = async (query: string): Promise<RagSearchResponse> => {
+  try {
+    console.log(`Performing RAG search with query: ${query}`);
+    
+    // Call the NEXT.JS local API route (not the backend server)
+    const response = await fetch(`/api/rag-search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ query }),
+    });
+    
+    const data = await response.json();
+    console.log('RAG search results received:', data);
+    
+    if (!response.ok) {
+      return {
+        answer: data.message || "Error executing search command. Please try again.",
+        succeeded: false,
+        error: data.error,
+        details: data.details
+      };
+    }
+    
+    return {
+      answer: data.answer || "No information found for your query.",
+      fullOutput: data.fullOutput,
+      succeeded: data.succeeded !== false,
+      usingFallback: data.usingFallback
+    };
+  } catch (error) {
+    console.error('Error performing RAG search:', error);
+    
+    return {
+      answer: error instanceof Error 
+        ? `Error: ${error.message}. Please try again.` 
+        : "An unexpected error occurred. Please try again.",
+      succeeded: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
 }; 

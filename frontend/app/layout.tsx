@@ -2,6 +2,7 @@ import './globals.css'
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import Sidebar from './components/Sidebar'
+import ChatButton from './components/ChatButton'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -20,6 +21,7 @@ export default function RootLayout({
       <body className={`${inter.className} h-full`}>
         <Sidebar />
         {children}
+        <ChatButton />
       </body>
     </html>
   )
