@@ -14,6 +14,7 @@ interface Message {
   text?: string;
   metadata?: { 
     usingFallback?: boolean;
+    fileReferences?: string[];
   };
 }
 
@@ -211,6 +212,35 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
       
       // Format the answer for better display
       let formattedAnswer = response.answer || "I couldn't find any relevant information.";
+      let fileReferences: string[] = [];
+      
+      // Extract file references from raw output if available
+      if (response.fullOutput) {
+        // First try to extract filenames from "File:" lines
+        const fileLines = response.fullOutput.match(/File: ([^:\n]+\.pdf)/g);
+        if (fileLines) {
+          fileReferences = fileLines.map(line => {
+            return line.replace(/File: /, '').trim();
+          });
+        }
+        
+        // Then try to extract from "Result X (Score: Y)" format
+        if (fileReferences.length === 0) {
+          const resultLines = response.fullOutput.split('\n');
+          for (let i = 0; i < resultLines.length; i++) {
+            const line = resultLines[i];
+            if (line.match(/^Result \d+ \(Score: [\d.]+\)$/i) && i + 1 < resultLines.length) {
+              const nextLine = resultLines[i + 1].trim();
+              if (nextLine && nextLine.endsWith('.pdf')) {
+                fileReferences.push(nextLine);
+              }
+            }
+          }
+        }
+        
+        // Remove duplicates
+        fileReferences = Array.from(new Set(fileReferences));
+      }
       
       // Clean up the response text
       formattedAnswer = formattedAnswer
@@ -225,7 +255,10 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
         timestamp: new Date(),
         isUser: false,
         text: formattedAnswer,
-        metadata: response.usingFallback ? { usingFallback: true } : undefined
+        metadata: {
+          usingFallback: response.usingFallback ? true : false,
+          fileReferences: fileReferences
+        }
       };
       
       const finalMessages = [...updatedMessages, assistantMessage];
@@ -384,19 +417,134 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
                     message.text || message.content
                   ) : (
                     <div className="whitespace-pre-wrap">
-                      {/* Format the assistant response with line breaks and sections */}
-                      {(message.text || message.content).split('\n').map((line, i) => {
-                        // Highlight section headers and results count
-                        if (line.includes('Person Summary:') || line.includes('Found') && line.includes('results:')) {
-                          return (
-                            <div key={i} className="font-semibold text-blue-700 mb-2 mt-2">
-                              {line}
-                            </div>
-                          );
+                      {(() => {
+                        const content = message.text || message.content;
+                        const lines = content.split('\n');
+                        const fileReferences = message.metadata?.fileReferences || [];
+                        
+                        // Find where enhanced results start
+                        const enhancedIndex = lines.findIndex(line => 
+                          line.includes('Enhanced Results:') ||
+                          line.match(/^Summary on .*:$/) || 
+                          (line.includes('Project Description:') && !line.includes('DESCRIPTION'))
+                        );
+                        
+                        // Find where raw search results start
+                        const rawSearchIndex = lines.findIndex(line => 
+                          line.includes('Raw Search Results:') || 
+                          line.includes('Found') && line.includes('results:')
+                        );
+                        
+                        // If we have enhanced results or file references
+                        if (enhancedIndex !== -1 || fileReferences.length > 0) {
+                          let enhancedResults = [];
+                          let referenceLinks = [];
+                          
+                          // Process enhanced results first (if present)
+                          if (enhancedIndex !== -1) {
+                            let i = enhancedIndex;
+                            
+                            // If the line is "Enhanced Results:", skip it
+                            if (lines[i].includes('Enhanced Results:')) {
+                              i++;
+                            }
+                            
+                            // Process each line until we hit raw search results or the end
+                            while (i < lines.length) {
+                              const line = lines[i];
+                              
+                              // If we hit raw search results, stop processing enhanced results
+                              if (line.includes('Raw Search Results:') || 
+                                  (line.match(/^Result \d+ \(Score: [\d.]+\)$/) && i < lines.length - 1 && lines[i+1].endsWith('.pdf'))) {
+                                break;
+                              }
+                              
+                              // Section heading
+                              if (line.match(/^Summary on .*:$/) || line.match(/^\d+\.\s+.*:$/) && !line.includes('Result')) {
+                                enhancedResults.push(
+                                  <div key={`enhanced-${i}`} className="font-semibold text-blue-700 mb-2 mt-2">
+                                    {line}
+                                  </div>
+                                );
+                              }
+                              // Numbered section (project details, etc)
+                              else if (line.match(/^\d+\.\s+.*:$/)) {
+                                enhancedResults.push(
+                                  <div key={`enhanced-${i}`} className="font-semibold mt-3 mb-1">
+                                    {line}
+                                  </div>
+                                );
+                              }
+                              // Bullet point
+                              else if (line.trim().startsWith('-')) {
+                                enhancedResults.push(
+                                  <div key={`enhanced-${i}`} className="ml-4 mb-1">
+                                    {line}
+                                  </div>
+                                );
+                              }
+                              // Regular line (if not empty or a header)
+                              else if (line.trim() && 
+                                      !line.includes('Enhanced Results:') && 
+                                      !line.includes('Raw Search Results:')) {
+                                enhancedResults.push(
+                                  <div key={`enhanced-${i}`} className="mb-1">
+                                    {line}
+                                  </div>
+                                );
+                              }
+                              
+                              i++;
+                            }
+                          }
+                          
+                          // Add reference links from file references
+                          if (fileReferences.length > 0) {
+                            // Add the "References:" heading
+                            referenceLinks.push(
+                              <div key="ref-heading" className="font-semibold mt-4 mb-2">
+                                References:
+                              </div>
+                            );
+                            
+                            // Add each file reference as a link to try all three buckets
+                            fileReferences.forEach((fileName, index) => {
+                              // Create separate links for each bucket
+                              const buckets = ["pdf-docs", "section-e-resumes", "section-f-resumes"];
+                              
+                              referenceLinks.push(
+                                <div key={`ref-${index}`} className="ml-4 text-blue-600 hover:underline mb-2">
+                                  {buckets.map((bucket, bucketIndex) => (
+                                    <a 
+                                      key={`${bucket}-${index}`}
+                                      href={`https://khqwfkvnwtovvcbidwnl.supabase.co/storage/v1/object/public/${bucket}/${encodeURIComponent(fileName)}`}
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className={bucketIndex > 0 ? "ml-3" : ""}
+                                      onClick={(e) => {
+                                        // Prevent default to handle click manually
+                                        e.preventDefault();
+                                        // Open the link in a new tab
+                                        window.open(`https://khqwfkvnwtovvcbidwnl.supabase.co/storage/v1/object/public/${bucket}/${encodeURIComponent(fileName)}`, '_blank');
+                                      }}
+                                    >
+                                      {bucketIndex === 0 ? fileName : `[${bucket.split('-')[0]}]`}
+                                    </a>
+                                  ))}
+                                </div>
+                              );
+                            });
+                          }
+                          
+                          // Return the combined elements
+                          return [...enhancedResults, ...referenceLinks];
+                        } else {
+                          // Default formatting for other types of responses
+                          return lines.map((line, i) => (
+                            <div key={i} className="mb-1">{line}</div>
+                          ));
                         }
-                        // Regular line
-                        return <div key={i} className="mb-1">{line}</div>;
-                      })}
+                      })()}
                     </div>
                   )}
                   {message.metadata?.usingFallback && (
