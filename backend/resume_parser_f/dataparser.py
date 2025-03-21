@@ -50,16 +50,11 @@ class RateLimitError(MistralAPIError):
 
 # Initialize Mistral client
 try:
-    from mistralai.client import MistralClient
-    from mistralai.models.chat_completion import ChatMessage
-    try:
-        from mistralai.exceptions import MistralAPIError, RateLimitError
-        logger.info("\033[92m✓ Mistral API client initialized with exception handling\033[0m")
-    except ImportError:
-        logger.warning("\033[93mMistral exceptions not found, using fallback exception classes\033[0m")
-        # We'll use our fallback exceptions defined above
-        
-    mistral_client = MistralClient(api_key=MISTRAL_API_KEY)
+    # Import our compatibility layer
+    from mistral_compat import get_mistral_client, MistralAPIError, RateLimitError
+    
+    # Initialize the client through our compatibility layer
+    mistral_client = get_mistral_client(api_key=MISTRAL_API_KEY)
     logger.info("\033[92m✓ Mistral API client initialized\033[0m")
 except ImportError:
     logger.error("\033[91mError: Failed to import Mistral AI client. Please install with 'pip install mistralai'\033[0m")
@@ -175,14 +170,13 @@ def extract_structured_data_with_mistral(
             # Make the API call
             logger.info(f"Sending PDF to Mistral (attempt {attempt}/{max_retries})...")
             response = mistral_client.chat(
-                model="mistral-large-latest",
+                model="mistral-tiny",
                 messages=[
-                    ChatMessage(role="system", content=system_prompt),
-                    ChatMessage(role="user", content=user_message)
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
                 ],
                 temperature=0.0,
-                max_tokens=4096,
-                tools=[]
+                max_tokens=4096
             )
             
             # Extract the JSON response
@@ -230,6 +224,7 @@ def extract_structured_data_with_mistral(
                 # Save the problematic response for debugging
                 debug_dir = script_dir / "debug"
                 debug_dir.mkdir(exist_ok=True)
+                timestamp = int(time.time())
                 with open(debug_dir / f"failed_response_{timestamp}.txt", "w") as f:
                     f.write(response_text)
                 

@@ -1,0 +1,34 @@
+{
+  "title_and_location": {
+    "title": "VE Study - Corpus Christi Ship Channel",
+    "location": "Corpus Christi, TX"
+  },
+  "year_completed": {
+    "professional_services": null,
+    "construction": null
+  },
+  "project_owner": "Port of Corpus Christi Authority",
+  "point_of_contact_name": "John Doe",
+  "point_of_contact": {
+    "phone": "555-1234",
+    "email": "johndoe@example.com"
+  },
+  "brief_description": "This project involves a feasibility study for the expansion of the Corpus Christi Ship Channel to accommodate larger vessels.",
+  "firms_from_section_c": [
+    {
+      "firm_name": "ACME Engineering",
+      "firm_location": "Houston, TX",
+      "role": "Prime"
+    },
+    {
+      "firm_name": "Beta Construction",
+      "firm_location": "San Antonio, TX",
+      "role": "Sub"
+    },
+    {
+      "firm_name": "Gamma Consulting",
+      "firm_location": "Austin, TX",
+      "role": "Sub"
+    }
+  ]
+}

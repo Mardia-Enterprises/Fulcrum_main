@@ -1,0 +1,31 @@
+{
+  "title_and_location": "Renovation of 1st Cavalry Headquarters",
+  "year_completed": {
+    "professional_services": null,
+    "construction": null
+  },
+  "project_owner": "U.S. Army",
+  "point_of_contact_name": "John Doe",
+  "point_of_contact": {
+    "phone": "555-1234",
+    "email": "johndoe@example.com"
+  },
+  "brief_description": "This project involves the complete renovation of the 1st Cavalry Headquarters, including structural repairs, electrical upgrades, and modernization of facilities.",
+  "firms_from_section_c": [
+    {
+      "firm_name": "ABC Construction",
+      "firm_location": "New York, NY",
+      "role": "Prime"
+    },
+    {
+      "firm_name": "DEF Engineering",
+      "firm_location": "Washington, D.C.",
+      "role": "Sub"
+    },
+    {
+      "firm_name": "GHI Electrical",
+      "firm_location": "Boston, MA",
+      "role": "Sub"
+    }
+  ]
+}

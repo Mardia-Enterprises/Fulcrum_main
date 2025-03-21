@@ -76,9 +76,28 @@ def import_dependencies() -> bool:
     
     try:
         # Import specific libraries that are required
-        from mistralai.client import MistralClient
-        from openai import OpenAI
-        from supabase import create_client
+        try:
+            from mistralai.client import MistralClient
+        except ImportError as e:
+            logger.error(f"\033[91mError: Failed to import Mistral AI client. {str(e)}\033[0m")
+            logger.error("\033[93mPlease run './install_dependencies.sh' from the resume_parser_f directory to install required packages\033[0m")
+            return False
+        
+        # Try importing OpenAI
+        try:
+            from openai import OpenAI
+        except ImportError as e:
+            logger.error(f"\033[91mError: Failed to import OpenAI client. {str(e)}\033[0m")
+            logger.error("\033[93mPlease run './install_dependencies.sh' from the resume_parser_f directory to install required packages\033[0m")
+            return False
+        
+        # Try importing Supabase
+        try:
+            from supabase import create_client
+        except ImportError as e:
+            logger.error(f"\033[91mError: Failed to import Supabase client. {str(e)}\033[0m")
+            logger.error("\033[93mPlease run './install_dependencies.sh' from the resume_parser_f directory to install required packages\033[0m")
+            return False
         
         # Import functions from our modules
         from dataparser import process_pdf_directory, extract_structured_data_with_mistral
@@ -88,7 +107,7 @@ def import_dependencies() -> bool:
         return True
     except ImportError as e:
         logger.error(f"\033[91mError importing dependencies: {str(e)}\033[0m")
-        logger.error("Please install required dependencies with 'pip install -r requirements.txt'")
+        logger.error("\033[93mPlease run './install_dependencies.sh' from the resume_parser_f directory to install required packages\033[0m")
         return False
     except Exception as e:
         logger.error(f"\033[91mUnexpected error importing dependencies: {str(e)}\033[0m")
@@ -149,14 +168,26 @@ def process_pdfs_to_supabase(
     # Step 2: Process JSON files to upload to Supabase
     logger.info("\nStep 2: Uploading extracted data to Supabase...")
     output_dir = script_dir / "output"
-    success_count = process_json_files(output_dir, limit)
-    
-    if success_count == 0:
-        logger.error("\033[91mFailed to upload any data to Supabase\033[0m")
-        return False
-    
-    logger.info(f"\033[92m✓ Successfully uploaded {success_count} projects to Supabase\033[0m")
-    return True
+    try:
+        success_count = process_json_files(output_dir, limit)
+        
+        if success_count == 0:
+            logger.error("\033[91mFailed to upload any data to Supabase\033[0m")
+            return False
+        
+        logger.info(f"\033[92m✓ Successfully uploaded {success_count} projects to Supabase\033[0m")
+        return True
+    except Exception as e:
+        # Check for specific error indicating table doesn't exist
+        error_str = str(e).lower()
+        if "relation" in error_str and "does not exist" in error_str and "projects" in error_str:
+            logger.warning("\033[93mWarning: Supabase 'projects' table does not exist. Data extraction was successful, but upload failed.\033[0m")
+            logger.warning("\033[93mPlease create the 'projects' table in your Supabase database.\033[0m")
+            logger.info("\033[92m✓ Data extraction was still successful. JSON files are in the output directory.\033[0m")
+            return True  # Return true since the extraction part was successful
+        else:
+            logger.error(f"\033[91mError uploading to Supabase: {str(e)}\033[0m")
+            return False
 
 def direct_process_sample() -> bool:
     """

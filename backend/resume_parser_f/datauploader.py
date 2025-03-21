@@ -230,6 +230,26 @@ def upsert_project_in_supabase(
     
     logger.info(f"Upserting project to Supabase: {project_id}")
     
+    # Check if the project already exists to merge data
+    try:
+        existing_data = None
+        existing_result = supabase.table('projects').select('project_data').eq('id', project_id).execute()
+        
+        if existing_result.data and len(existing_result.data) > 0:
+            existing_data = existing_result.data[0].get('project_data')
+            logger.info(f"Found existing project data with ID {project_id}")
+            
+            # Merge the existing data with the new data, giving preference to non-empty new values
+            if existing_data:
+                for key, value in existing_data.items():
+                    # Only use existing data if the new data doesn't have this field or has an empty value
+                    if key not in project_data or not project_data[key]:
+                        project_data[key] = value
+                
+                logger.info("Merged existing data with new data")
+    except Exception as e:
+        logger.warning(f"Could not check for existing project data: {str(e)}")
+    
     # Generate text for embedding
     project_text = project_to_text(project_data)
     
@@ -279,6 +299,60 @@ def upsert_project_in_supabase(
     
     return False
 
+def normalize_title(title: str) -> str:
+    """
+    Normalize a title for comparison to detect duplicates.
+    
+    Args:
+        title: Project title
+        
+    Returns:
+        Normalized title for comparison
+    """
+    if not isinstance(title, str):
+        title = str(title)
+    return title.lower().replace(" ", "").replace(",", "").replace(".", "").replace("-", "").replace("_", "")
+
+def is_duplicate_project(title: str) -> Optional[str]:
+    """
+    Check if a project with a similar title already exists in Supabase.
+    
+    Args:
+        title: Project title to check
+        
+    Returns:
+        The ID of the existing project if found, None otherwise
+    """
+    if not title:
+        return None
+        
+    try:
+        # Get all projects from Supabase
+        result = supabase.table('projects').select('id, title').execute()
+        
+        if not result.data:
+            return None
+            
+        # Normalize the title for comparison
+        normalized_title = normalize_title(title)
+        
+        # Check for similar titles
+        for project in result.data:
+            existing_title = project.get('title', '')
+            if not existing_title:
+                continue
+                
+            existing_normalized = normalize_title(existing_title)
+            
+            # If the normalized titles are similar enough, consider it a duplicate
+            if normalized_title in existing_normalized or existing_normalized in normalized_title:
+                return project.get('id')
+                
+        return None
+    except Exception as e:
+        logger.error(f"\033[91mError checking for duplicate project: {str(e)}\033[0m")
+        return None
+
 def process_json_files(
     json_dir: Union[str, Path], 
     limit: Optional[int] = None
@@ -316,6 +390,9 @@ def process_json_files(
         logger.error("\033[91mCannot connect to Supabase, aborting processing\033[0m")
         return 0
     
+    # Track processed project titles to avoid duplicates within the same batch
+    processed_titles = {}
+    
     # Process each JSON file
     success_count = 0
     for i, json_file in enumerate(json_files):
@@ -328,18 +405,41 @@ def process_json_files(
             
             # Extract title and create ID
             title = project_data.get("title_and_location", "Unknown Project")
-            # Create a clean ID from the title or filename
-            project_id = json_file.stem
-            if project_id.startswith("project_data_"):
-                # Use the title to create a more meaningful ID
-                clean_title = title.lower().replace(" ", "_").replace(",", "").replace(".", "")
-                project_id = f"proj_{clean_title[:30]}_{json_file.stem[-8:]}"
+            # Ensure title is a string
+            if isinstance(title, dict):
+                # If it's a dict, try to convert it to a string representation
+                title = str(title.get("title", "")) if "title" in title else str(title)
+            elif not isinstance(title, str):
+                # If it's any other non-string type, convert to string
+                title = str(title)
+                
+            # Check if this title has already been processed in this batch
+            normalized_title = normalize_title(title)
+            if normalized_title in processed_titles:
+                logger.info(f"\033[93mSkipping duplicate project (already processed in this batch): {title}\033[0m")
+                continue
+                
+            # Check if this project already exists in Supabase
+            existing_id = is_duplicate_project(title)
+            if existing_id:
+                logger.info(f"\033[93mFound existing project with similar title: {title}\033[0m")
+                logger.info(f"\033[93mUpdating existing project with ID: {existing_id}\033[0m")
+                project_id = existing_id
+            else:
+                # Create a clean ID from the title or filename
+                project_id = json_file.stem
+                if project_id.startswith("project_data_"):
+                    # Use the title to create a more meaningful ID
+                    clean_title = title.lower().replace(" ", "_").replace(",", "").replace(".", "")
+                    project_id = f"proj_{clean_title[:30]}_{json_file.stem[-8:]}"
             
             # Upsert to Supabase
             success = upsert_project_in_supabase(project_id, title, project_data)
             
             if success:
                 success_count += 1
+                # Add to processed titles
+                processed_titles[normalized_title] = project_id
                 
                 # Add a small delay between processing to avoid rate limits
                 if i < len(json_files) - 1:
@@ -352,6 +452,7 @@ def process_json_files(
     logger.info(f"Total JSON files: {len(json_files)}")
     logger.info(f"Successfully processed: {success_count}")
     logger.info(f"Failed: {len(json_files) - success_count}")
+    logger.info(f"Unique projects: {len(processed_titles)}")
     
     return success_count
 

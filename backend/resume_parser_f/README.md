@@ -1,172 +1,123 @@
 # Section F Resume Parser
 
-This module processes Section F resumes, extracts structured data using Mistral AI, and uploads the data with OpenAI embeddings to a Supabase database.
+This module processes Section F PDFs containing project information and uploads the structured data to Supabase.
 
-## Table of Contents
+## Prerequisites
 
-- [Overview](#overview)
-- [Setup](#setup)
-- [Usage](#usage)
-- [File Structure](#file-structure)
-- [Data Structure](#data-structure)
-- [Troubleshooting](#troubleshooting)
+The following dependencies are required:
+- Python 3.8+
+- mistralai==0.4.2 (important: must use version 0.4.2 specifically)
+- openai
+- supabase
+- pdfplumber
+- python-dotenv
 
-## Overview
+## Installation
 
-The `resume_parser_f` module:
+1. Make sure you have a proper `.env` file in the root directory of the project with the following variables:
+   ```
+   MISTRAL_API_KEY=your_mistral_api_key
+   OPENAI_API_KEY=your_openai_api_key
+   SUPABASE_PROJECT_URL=your_supabase_url
+   SUPABASE_PRIVATE_API_KEY=your_supabase_key
+   ```
 
-1. Processes Section F PDFs using Mistral AI for text extraction
-2. Structures the data into specific JSON format with project details
-3. Generates embeddings using OpenAI for semantic search
-4. Uploads the structured data and embeddings to Supabase
-5. Provides verification tools to ensure data integrity
-
-## Setup
-
-### Prerequisites
-
-- Python 3.8 or higher
-- Supabase account with a project set up
-- Mistral AI API key
-- OpenAI API key
-
-### Installation
-
-1. Ensure you have a `.env` file in the project root with the following keys:
-
-```
-MISTRAL_API_KEY=your_mistral_api_key
-OPENAI_API_KEY=your_openai_api_key
-SUPABASE_PROJECT_URL=your_supabase_url
-SUPABASE_PRIVATE_API_KEY=your_supabase_key
-```
-
-2. Install dependencies:
-
-```bash
-cd backend
-pip install -r requirements.txt
-```
-
-3. Set up the Supabase database:
-
-Run the SQL script in `supabase_setup.sql` in your Supabase SQL Editor to create the necessary tables and functions.
+2. Install the required dependencies:
+   ```bash
+   ./install_dependencies.sh
+   ```
 
 ## Usage
 
-### Process PDF files
+To process PDFs in the Section F Resumes directory:
 
 ```bash
-cd backend/resume_parser_f
 ./process_section_f.sh
 ```
 
-This script will:
-- Look for PDF files in the `Section F Resumes` directory
-- Process them with Mistral AI
-- Generate structured JSON data
-- Create embeddings with OpenAI
-- Upload to Supabase
+This will:
+1. Check if all required environment variables are set
+2. Import required dependencies
+3. Process all PDFs in the Section F Resumes directory
+4. Extract structured data using Mistral AI
+5. Upload the data to Supabase
 
-### Verify uploads
+## Handling Duplicates
 
-```bash
-cd backend/resume_parser_f
-python verify_uploads.py
-```
+The system now includes duplicate detection and prevention:
 
-This will check:
-- If Supabase connection is working
-- If the table structure is correct
-- If permissions are properly set
-- Test sample uploads and search functionality
-- Display existing projects in the database
+1. **Prevention:** When processing new PDFs, the system checks for existing projects with similar titles before creating new entries. If a similar project is found, it will update the existing project instead of creating a duplicate.
 
-### Process a single project
-
-```bash
-cd backend/resume_parser_f
-python process_projects.py --sample
-```
-
-This will process a sample project without needing to process PDFs, useful for testing.
-
-## File Structure
-
-- `dataparser.py`: Handles PDF extraction using Mistral AI
-- `datauploader.py`: Manages embedding generation and Supabase uploads
-- `process_projects.py`: Combines parsing and uploading in a single workflow
-- `process_section_f.sh`: Shell script to handle the full processing pipeline
-- `verify_uploads.py`: Verification script for Supabase data
-- `supabase_setup.sql`: SQL setup script for Supabase
-- `output/`: Directory for extracted JSON data
-- `debug/`: Directory for debugging information
-
-## Data Structure
-
-The extracted data follows this JSON structure:
-
-```json
-{
-  "project_owner": "USACE Fort Worth District",
-  "year_completed": {
-    "construction": null,
-    "professional_services": 2019
-  },
-  "point_of_contact": "555-555-5555",
-  "brief_description": "Project description text...",
-  "title_and_location": "Project Title, Location",
-  "firms_from_section_c": [
-    {
-      "role": "Prime: Architecture, Civil, Structural, and MEP",
-      "firm_name": "Example Engineering",
-      "firm_location": "City, State"
-    },
-    {
-      "role": "Sub: Civil, Structural, and ITR",
-      "firm_name": "Another Firm Inc.",
-      "firm_location": "Other City, ST"
-    }
-  ],
-  "point_of_contact_name": "Contact Name, Role"
-}
-```
+2. **Cleanup:** To clean up existing duplicates in the database, run:
+   ```bash
+   ./cleanup_duplicates.py
+   ```
+   
+   This script will:
+   - Identify groups of duplicates based on title similarity
+   - Merge the data from all duplicates into the most recent one
+   - Update the primary project with the merged data
+   - Delete the duplicate entries
+   
+   The script has a "dry run" option that shows what would be changed without making actual changes.
 
 ## Troubleshooting
 
-### Common Issues
+If you encounter an error like this:
+```
+Error: Failed to import Mistral AI client. Please install with 'pip install mistralai'
+```
 
-1. **PDF extraction fails**:
-   - Check that the Mistral API key is correct
-   - Ensure PDFs are properly formatted SF330 Section F forms
-   - Look at the log file for detailed error messages
+Run the installation script:
+```bash
+./install_dependencies.sh
+```
 
-2. **Embedding generation fails**:
-   - Verify the OpenAI API key is correct
-   - Check OpenAI usage limits and billing status
+### Mistral API Version Issue
 
-3. **Supabase uploads fail**:
-   - Ensure the Supabase URL and API key are correct
-   - Check that the `projects` table is created with the correct structure
-   - Verify that the pgvector extension is enabled
+The code requires mistralai version 0.4.2 specifically. Newer versions (1.x+) use a different API that is not compatible with the current code.
 
-4. **Missing fields in extracted data**:
-   - Check the PDFs for correct formatting
-   - Look at the generated JSON files in the `output/` directory
-   - May require manual correction of the JSON data
+If you see an error like this:
+```
+This client is deprecated. To migrate to the new client, please refer to this guide: https://github.com/mistralai/client-python/blob/main/MIGRATION.md
+```
 
-### Logs
+Run the fix script:
+```bash
+python3 fix_mistral_version.py
+```
 
-Check `resume_parser.log` for detailed logs of the extraction and upload process.
+This will downgrade mistralai to version 0.4.2.
 
-### Running Verification
+### Compatibility Layer
 
-Always run `verify_uploads.py` after setting up the system to ensure everything is configured correctly.
+The code includes a compatibility layer (`mistral_compat.py`) that allows it to work with both the old v0.4.2 API and newer versions. This ensures that features like file upload, which were introduced in newer versions, still work even when using v0.4.2.
 
-### Error Handling
+When using v0.4.2, the compatibility layer extracts text from PDF files locally using pdfplumber instead of using the file upload API.
 
-The system has built-in error handling with:
-- Rate limit handling for API calls
-- Exponential backoff for retries
-- Detailed logging
-- Exception handling for all critical operations 
+### Fixed Issues
+
+The following issues have been fixed in the current version:
+- ChatMessage error fixed by using dictionaries instead of ChatMessage objects
+- Timestamp variable access error fixed in the JSON parsing code
+- Title processing error fixed by ensuring titles are always strings
+- Supabase table not found error now handled gracefully with appropriate messages
+
+### Supabase Integration
+
+The script will attempt to upload data to Supabase. If the "projects" table doesn't exist in your Supabase database, you need to create it with the following columns:
+- id (text, primary key)
+- title (text)
+- project_data (jsonb)
+- embedding (vector(1536))
+
+If you don't have access to Supabase, the script will still extract data from the PDFs and save it as JSON files in the output directory.
+
+## Files
+
+- `process_section_f.sh`: Main script to process PDFs
+- `process_projects.py`: Python script that orchestrates the PDF processing workflow
+- `dataparser.py`: Handles PDF parsing and extraction of structured data
+- `datauploader.py`: Uploads extracted data to Supabase
+- `install_dependencies.sh`: Installs required dependencies
+- `mistral_compat.py`: Compatibility layer for Mistral API versions 

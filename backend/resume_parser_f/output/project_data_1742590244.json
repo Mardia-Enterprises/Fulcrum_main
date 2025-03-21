@@ -1,0 +1,34 @@
+{
+  "title_and_location": {
+    "title": "Building 373 Dynamometer Facility",
+    "location": "Location Not Specified"
+  },
+  "year_completed": {
+    "professional_services": null,
+    "construction": null
+  },
+  "project_owner": "Department of Energy",
+  "point_of_contact_name": "John Doe",
+  "point_of_contact": {
+    "phone": "555-1234",
+    "email": "johndoe@example.com"
+  },
+  "brief_description": "This project involves the construction of a new Dynamometer Facility for the Department of Energy. The facility will be used for testing and research purposes.",
+  "firms_from_section_c": [
+    {
+      "firm_name": "ABC Construction",
+      "firm_location": "City, State",
+      "role": "Prime"
+    },
+    {
+      "firm_name": "DEF Engineering",
+      "firm_location": "City, State",
+      "role": "Sub"
+    },
+    {
+      "firm_name": "GHI Architects",
+      "firm_location": "City, State",
+      "role": "Sub"
+    }
+  ]
+}

@@ -96,14 +96,45 @@ echo -e "${GREEN}Found $NUM_PDFS PDF files to process${NC}"
 # Process PDFs with the Python script
 echo -e "${BLUE}${BOLD}Processing Section F PDFs...${NC}"
 python3 process_projects.py --pdf-dir "$PDF_DIR"
+PROCESS_EXIT_CODE=$?
 
 # Check if processing was successful
-if [ $? -ne 0 ]; then
+if [ $PROCESS_EXIT_CODE -ne 0 ]; then
     echo -e "${RED}Error: Processing failed${NC}"
-    exit 1
+    
+    # Check if it's a dependency issue
+    if grep -q "Failed to import Mistral AI client" resume_parser.log; then
+        echo -e "${YELLOW}It appears you are missing required dependencies.${NC}"
+        echo -e "${YELLOW}Would you like to install them now? (y/n)${NC}"
+        read -r INSTALL_DEPS
+        
+        if [[ "$INSTALL_DEPS" =~ ^[Yy]$ ]]; then
+            echo -e "${BLUE}Installing dependencies...${NC}"
+            chmod +x ./install_dependencies.sh
+            ./install_dependencies.sh
+            
+            echo -e "${GREEN}Dependencies installed. Trying again...${NC}"
+            python3 process_projects.py --pdf-dir "$PDF_DIR"
+            PROCESS_EXIT_CODE=$?
+            
+            if [ $PROCESS_EXIT_CODE -ne 0 ]; then
+                echo -e "${RED}Error: Processing still failed. Please check the logs.${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${YELLOW}Please run './install_dependencies.sh' to install required dependencies.${NC}"
+            exit 1
+        fi
+    else
+        exit 1
+    fi
+elif grep -q "Supabase 'projects' table does not exist" resume_parser.log; then
+    echo -e "${YELLOW}Warning: Supabase 'projects' table does not exist.${NC}"
+    echo -e "${YELLOW}The data extraction was successful, but the data could not be uploaded to Supabase.${NC}"
+    echo -e "${GREEN}✓ The parsed data is available in the output directory as JSON files.${NC}"
+else
+    echo -e "${GREEN}${BOLD}✓ Processing completed successfully${NC}"
 fi
-
-echo -e "${GREEN}${BOLD}✓ Processing completed successfully${NC}"
 
 # List the projects in Supabase
 echo -e "${BLUE}${BOLD}Verifying projects in Supabase...${NC}"
