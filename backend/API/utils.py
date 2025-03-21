@@ -23,6 +23,12 @@ else:
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+def setup_logging():
+    """Setup and return a logger for use in other modules"""
+    log = logging.getLogger("api")
+    log.setLevel(logging.INFO)
+    return log
+
 def generate_embedding(text):
     """Generates an embedding using OpenAI's model."""
     try:

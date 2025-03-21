@@ -5,14 +5,13 @@ import os
 import sys
 import json
 import logging
+from typing import List, Dict, Any, Optional, Union
+
+# Import utilities first so we can use setup_logging
+from utils import generate_embedding, setup_logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-logger = logging.getLogger("api")
+logger = setup_logging()
 
 # Load environment variables from root .env file
 from dotenv import load_dotenv
@@ -24,9 +23,6 @@ if os.path.exists(env_path):
 else:
     logger.warning(f"Root .env file not found at {env_path}. Using system environment variables.")
 
-# Import utilities
-from utils import generate_embedding
-
 # Import models
 from models import (
     QueryRequest, 
@@ -36,25 +32,6 @@ from models import (
     EmployeeCreate,
     SearchResponse
 )
-
-# Function to create a default employee for cases where we need to return something
-def create_default_employee(name: str) -> EmployeeDetail:
-    """
-    Create a default employee with the given name and empty fields
-    to use as a fallback when the actual employee data can't be retrieved properly
-    """
-    logger.info(f"Creating default employee for: {name}")
-    return EmployeeDetail(
-        name=name,
-        role="Role not available",
-        years_experience={"Total": "Not available", "With Current Firm": "Not available"},
-        firm={"Name": "Not available", "Location": "Not available"},
-        education="Not available",
-        professional_registrations=[],
-        other_qualifications="Not available",
-        relevant_projects=[],
-        file_id=None
-    )
 
 # Import database functions
 from database import (
@@ -80,6 +57,96 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
+
+def merge_employee_data(new_resume_data: Dict[str, Any], existing_resume_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Merge new employee data with existing data, preserving existing information
+    and appending new information as needed.
+    
+    Args:
+        new_resume_data: The new employee data
+        existing_resume_data: The existing employee data
+        
+    Returns:
+        Dict[str, Any]: The merged employee data
+    """
+    # Make a copy of the new data to avoid modifying the original
+    merged_data = new_resume_data.copy()
+    
+    # Merge roles (ensure it's a list)
+    existing_role = existing_resume_data.get("Role in Contract", [])
+    new_role = new_resume_data.get("Role in Contract", [])
+    if isinstance(existing_role, str):
+        existing_role = [existing_role]
+    if isinstance(new_role, str):
+        new_role = [new_role]
+    
+    merged_roles = list(set(existing_role + (new_role if new_role != ["Not specified"] else [])))
+    if merged_roles:
+        merged_data["Role in Contract"] = merged_roles
+    
+    # Merge projects
+    existing_projects = existing_resume_data.get("Relevant Projects", [])
+    new_projects = new_resume_data.get("Relevant Projects", [])
+    
+    # Create a set of project names to avoid duplicates
+    existing_project_names = set()
+    for project in existing_projects:
+        if isinstance(project, dict) and "Name" in project:
+            existing_project_names.add(project["Name"])
+    
+    # Add new projects that don't exist
+    merged_projects = existing_projects.copy()
+    for project in new_projects:
+        if isinstance(project, dict) and "Name" in project:
+            if project["Name"] not in existing_project_names:
+                merged_projects.append(project)
+    
+    if merged_projects:
+        merged_data["Relevant Projects"] = merged_projects
+    
+    # Use the more detailed education if provided
+    if new_resume_data.get("Education") == "Not provided" and existing_resume_data.get("Education"):
+        merged_data["Education"] = existing_resume_data["Education"]
+    
+    # Use the more detailed professional registrations if provided
+    if not new_resume_data.get("Professional Registrations") and existing_resume_data.get("Professional Registrations"):
+        merged_data["Professional Registrations"] = existing_resume_data["Professional Registrations"]
+    
+    # Use existing years experience if new one is not provided
+    if (new_resume_data.get("Years of Experience", {}).get("Total") == "Unknown" and 
+        existing_resume_data.get("Years of Experience", {}).get("Total") != "Unknown"):
+        merged_data["Years of Experience"] = existing_resume_data["Years of Experience"]
+    
+    # Use existing firm info if new one is not provided
+    if (new_resume_data.get("Firm Name & Location", {}).get("Name") == "Unknown" and 
+        existing_resume_data.get("Firm Name & Location", {}).get("Name") != "Unknown"):
+        merged_data["Firm Name & Location"] = existing_resume_data["Firm Name & Location"]
+    
+    # Use existing file_id if it exists and new one doesn't
+    if existing_resume_data.get("file_id") and not new_resume_data.get("file_id"):
+        merged_data["file_id"] = existing_resume_data["file_id"]
+    
+    return merged_data
+
+# Function to create a default employee for cases where we need to return something
+def create_default_employee(name: str) -> EmployeeDetail:
+    """
+    Create a default employee with the given name and empty fields
+    to use as a fallback when the actual employee data can't be retrieved properly
+    """
+    logger.info(f"Creating default employee for: {name}")
+    return EmployeeDetail(
+        name=name,
+        role="Role not available",
+        years_experience={"Total": "Not available", "With Current Firm": "Not available"},
+        firm={"Name": "Not available", "Location": "Not available"},
+        education="Not available",
+        professional_registrations=[],
+        other_qualifications="Not available",
+        relevant_projects=[],
+        file_id=None
+    )
 
 # Root endpoint
 @app.get("/")
@@ -216,6 +283,51 @@ async def get_employees_for_role(role: str):
         logger.error(f"Error retrieving employees by role: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving employees by role: {str(e)}")
 
+def find_similar_employee(name: str) -> Optional[str]:
+    """
+    Find an existing employee with a similar name to avoid duplicates.
+    This helps with cases like "Jim Wilson" vs "Jim-Wilson" or "Jim Wilson 1".
+    
+    Args:
+        name: The name to check for similar employees
+        
+    Returns:
+        The name of the similar employee if found, None otherwise
+    """
+    try:
+        # Normalize the input name for comparison
+        from supabase_adapter import supabase
+        
+        normalized_name = name.lower().replace('-', ' ').replace('_', ' ')
+        normalized_name = ' '.join([part for part in normalized_name.split() if not part.isdigit()])
+        normalized_name = normalized_name.strip()
+        
+        # Get all employees
+        result = supabase.table("employees").select("employee_name").execute()
+        
+        if hasattr(result, 'error') and result.error:
+            logger.error(f"Error retrieving employees for similarity check: {result.error}")
+            return None
+            
+        for item in result.data:
+            existing_name = item.get("employee_name", "")
+            
+            # Normalize existing name
+            existing_normalized = existing_name.lower().replace('-', ' ').replace('_', ' ')
+            existing_normalized = ' '.join([part for part in existing_normalized.split() if not part.isdigit()])
+            existing_normalized = existing_normalized.strip()
+            
+            # Check if normalized names match
+            if normalized_name == existing_normalized:
+                logger.info(f"Found similar existing employee: '{existing_name}' for input '{name}'")
+                return existing_name
+        
+        return None
+    
+    except Exception as e:
+        logger.error(f"Error checking for similar employees: {str(e)}")
+        return None
+
 # 5. Add employee with resume upload
 @app.post("/api/employees", response_model=EmployeeDetail)
 async def add_employee(
@@ -225,6 +337,7 @@ async def add_employee(
     """
     Add a new employee by uploading their resume PDF
     Extract structured data using simple parsing and store in Supabase
+    If employee already exists, merge the new data with existing data
     """
     try:
         # Create a temporary file to store the uploaded PDF
@@ -233,26 +346,93 @@ async def add_employee(
             content = await file.read()
             temp_file.write(content)
         
-        logger.info(f"Processing resume for: {employee_name or 'Unknown'}")
+        # If no name was provided, use the filename
+        if not employee_name:
+            employee_name = os.path.splitext(file.filename)[0].replace("_", " ").title()
+            logger.info(f"Using filename as employee name: {employee_name}")
+        
+        logger.info(f"Processing resume for: {employee_name}")
+        
+        # Check for similar existing employees
+        similar_name = find_similar_employee(employee_name)
+        if similar_name and similar_name != employee_name:
+            logger.info(f"Found similar existing employee '{similar_name}', using that instead of '{employee_name}'")
+            employee_name = similar_name
         
         # Process the file to extract basic data
         try:
-            # If no name was provided, use the filename
-            if not employee_name:
-                employee_name = os.path.splitext(file.filename)[0].replace("_", " ").title()
-                logger.info(f"Using filename as employee name: {employee_name}")
+            # Import the PDF extraction functionality
+            try:
+                # First try to import from resume_parser
+                sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+                from resume_parser.dataparser import extract_structured_data_with_mistral, upload_pdf_to_mistral
+                
+                # Process the PDF file
+                logger.info(f"Uploading PDF to Mistral AI: {temp_file_path}")
+                pdf_url = upload_pdf_to_mistral(temp_file_path)
+                
+                if pdf_url:
+                    logger.info(f"Extracting data from PDF using Mistral AI")
+                    structured_data = extract_structured_data_with_mistral(pdf_url)
+                    
+                    if structured_data:
+                        logger.info(f"Successfully extracted data from PDF for {employee_name}")
+                        
+                        # Use the extracted data to populate the employee record
+                        new_resume_data = format_employee_data(
+                            employee_name=employee_name,
+                            role=structured_data.get('role', None),
+                            years_experience=structured_data.get('years_experience', None),
+                            firm=structured_data.get('firm_name_and_location', None),
+                            education=structured_data.get('education', None),
+                            professional_registrations=structured_data.get('current_professional_registration', None),
+                            other_qualifications=structured_data.get('other_professional_qualifications', None),
+                            relevant_projects=structured_data.get('relevant_projects', None),
+                            file_id=file.filename
+                        )
+                    else:
+                        logger.warning(f"Failed to extract structured data from PDF, using default values")
+                        new_resume_data = format_employee_data(
+                            employee_name=employee_name,
+                            file_id=file.filename
+                        )
+                else:
+                    logger.warning(f"Failed to upload PDF to Mistral AI, using default values")
+                    new_resume_data = format_employee_data(
+                        employee_name=employee_name,
+                        file_id=file.filename
+                    )
+            except ImportError as e:
+                logger.warning(f"Could not import dataparser: {str(e)}, using default values")
+                new_resume_data = format_employee_data(
+                    employee_name=employee_name,
+                    file_id=file.filename
+                )
             
-            # Format the employee data consistently
-            resume_data = format_employee_data(
-                employee_name=employee_name,
-                file_id=file.filename
-            )
+            # Check if employee already exists
+            existing_employee = get_employee_by_name(employee_name)
+            
+            # If employee exists, merge the data
+            if existing_employee:
+                logger.info(f"Employee {employee_name} already exists, merging data")
+                
+                # Get existing data
+                from supabase_adapter import supabase
+                employee_id = employee_name.lower().replace(' ', '_')
+                result = supabase.table("employees").select("*").eq("id", employee_id).execute()
+                
+                if hasattr(result, 'error') and result.error:
+                    logger.error(f"Error retrieving existing employee data: {result.error}")
+                elif result.data:
+                    existing_resume_data = result.data[0].get("resume_data", {})
+                    # Use the helper function to merge the data
+                    new_resume_data = merge_employee_data(new_resume_data, existing_resume_data)
             
             # Convert employee name to a valid id by replacing spaces with underscores
             employee_id = employee_name.lower().replace(' ', '_')
             
             # Generate embedding for the resume data
-            resume_text = json.dumps(resume_data)
+            resume_text = json.dumps(new_resume_data)
             embedding = generate_embedding(resume_text)
             
             # Store in Supabase
@@ -262,7 +442,7 @@ async def add_employee(
                 "id": employee_id,
                 "employee_name": employee_name,
                 "file_id": file.filename,
-                "resume_data": resume_data,
+                "resume_data": new_resume_data,
                 "embedding": embedding
             }
             
@@ -273,17 +453,20 @@ async def add_employee(
                 logger.error(f"Error storing employee in Supabase: {result.error}")
                 raise HTTPException(status_code=500, detail="Failed to store employee data")
             
-            logger.info(f"Successfully added employee: {employee_name}")
+            if existing_employee:
+                logger.info(f"Successfully updated employee: {employee_name}")
+            else:
+                logger.info(f"Successfully added new employee: {employee_name}")
             
             # Get the employee details
-            employee = get_employee_by_name(employee_name)
+            updated_employee = get_employee_by_name(employee_name)
             
-            if not employee:
+            if not updated_employee:
                 logger.error(f"Failed to retrieve employee after storage: {employee_name}")
                 # Return a default employee as fallback
                 return create_default_employee(employee_name)
             
-            return employee
+            return updated_employee
             
         finally:
             # Clean up the temporary file
@@ -292,20 +475,41 @@ async def add_employee(
                 logger.info(f"Removed temporary file: {temp_file_path}")
     
     except Exception as e:
-        logger.error(f"Error adding employee: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding employee: {str(e)}")
+        logger.error(f"Error adding/updating employee: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error adding/updating employee: {str(e)}")
 
 # 6. Add employee manually
 @app.post("/api/employees/manual", response_model=EmployeeDetail)
 async def add_employee_manually(employee: EmployeeCreate):
     """
     Add a new employee manually with structured data
+    If employee already exists, merge the new data with existing data
     """
     try:
-        logger.info(f"Adding employee manually: {employee.name}")
+        logger.info(f"Adding or updating employee: {employee.name}")
         
-        # Format the employee data consistently
-        resume_data = format_employee_data(
+        # Check for similar existing employees
+        similar_name = find_similar_employee(employee.name)
+        if similar_name and similar_name != employee.name:
+            logger.info(f"Found similar existing employee '{similar_name}', using that instead of '{employee.name}'")
+            # Create a new employee with the corrected name
+            corrected_employee = EmployeeCreate(
+                name=similar_name,
+                role=employee.role,
+                years_experience=employee.years_experience,
+                firm=employee.firm,
+                education=employee.education,
+                professional_registrations=employee.professional_registrations,
+                other_qualifications=employee.other_qualifications,
+                relevant_projects=employee.relevant_projects
+            )
+            employee = corrected_employee
+        
+        # Check if employee already exists
+        existing_employee = get_employee_by_name(employee.name)
+        
+        # Format the new employee data
+        new_resume_data = format_employee_data(
             employee_name=employee.name,
             role=employee.role,
             years_experience=employee.years_experience,
@@ -317,8 +521,24 @@ async def add_employee_manually(employee: EmployeeCreate):
             file_id=None
         )
         
+        # If employee exists, merge the data
+        if existing_employee:
+            logger.info(f"Employee {employee.name} already exists, merging data")
+            
+            # Get existing data
+            from supabase_adapter import supabase
+            employee_id = employee.name.lower().replace(' ', '_')
+            result = supabase.table("employees").select("*").eq("id", employee_id).execute()
+            
+            if hasattr(result, 'error') and result.error:
+                logger.error(f"Error retrieving existing employee data: {result.error}")
+            elif result.data:
+                existing_resume_data = result.data[0].get("resume_data", {})
+                # Use the helper function to merge the data
+                new_resume_data = merge_employee_data(new_resume_data, existing_resume_data)
+        
         # Generate an embedding for the employee data
-        employee_text = json.dumps(resume_data)
+        employee_text = json.dumps(new_resume_data)
         embedding = generate_embedding(employee_text)
         
         # Convert employee name to a valid id by replacing spaces with underscores
@@ -330,8 +550,8 @@ async def add_employee_manually(employee: EmployeeCreate):
         vector_data = {
             "id": employee_id,
             "employee_name": employee.name,
-            "file_id": None,
-            "resume_data": resume_data,
+            "file_id": new_resume_data.get("file_id"),
+            "resume_data": new_resume_data,
             "embedding": embedding
         }
         
@@ -342,21 +562,24 @@ async def add_employee_manually(employee: EmployeeCreate):
             logger.error(f"Error storing employee in Supabase: {result.error}")
             raise HTTPException(status_code=500, detail="Failed to store employee data")
         
-        logger.info(f"Successfully added employee: {employee.name}")
+        if existing_employee:
+            logger.info(f"Successfully updated employee: {employee.name}")
+        else:
+            logger.info(f"Successfully added new employee: {employee.name}")
         
         # Get the employee details
-        new_employee = get_employee_by_name(employee.name)
+        updated_employee = get_employee_by_name(employee.name)
         
-        if not new_employee:
+        if not updated_employee:
             logger.error(f"Failed to retrieve employee after storage: {employee.name}")
             # Return a default employee as fallback
             return create_default_employee(employee.name)
         
-        return new_employee
+        return updated_employee
     
     except Exception as e:
-        logger.error(f"Error adding employee: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding employee: {str(e)}")
+        logger.error(f"Error adding/updating employee: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error adding/updating employee: {str(e)}")
 
 # 7. Delete employee
 @app.delete("/api/employees/{employee_name}")
@@ -380,20 +603,109 @@ async def delete_employee(employee_name: str):
         logger.error(f"Error deleting employee: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting employee: {str(e)}")
 
-# 8. Create or update a specific employee with predefined data
+# 8. Update an existing employee
+@app.put("/api/employees/{employee_name}", response_model=EmployeeDetail)
+async def update_employee_manually(employee_name: str, employee: EmployeeCreate):
+    """
+    Update an existing employee with new data
+    The existing data and new data will be merged
+    """
+    try:
+        # Check if employee exists (required for PUT)
+        existing_employee = get_employee_by_name(employee_name)
+        if not existing_employee:
+            logger.warning(f"Employee not found for update: {employee_name}")
+            raise HTTPException(status_code=404, detail=f"Employee '{employee_name}' not found")
+        
+        logger.info(f"Updating employee: {employee_name}")
+        
+        # Format the new employee data
+        new_resume_data = format_employee_data(
+            employee_name=employee_name,
+            role=employee.role,
+            years_experience=employee.years_experience,
+            firm=employee.firm,
+            education=employee.education,
+            professional_registrations=employee.professional_registrations,
+            other_qualifications=employee.other_qualifications,
+            relevant_projects=employee.relevant_projects,
+            file_id=None
+        )
+        
+        # Get existing data
+        from supabase_adapter import supabase
+        employee_id = employee_name.lower().replace(' ', '_')
+        result = supabase.table("employees").select("*").eq("id", employee_id).execute()
+        
+        if hasattr(result, 'error') and result.error:
+            logger.error(f"Error retrieving existing employee data: {result.error}")
+            raise HTTPException(status_code=500, detail="Failed to retrieve existing employee data")
+        
+        if not result.data:
+            logger.error(f"No data found for employee: {employee_name}")
+            raise HTTPException(status_code=404, detail=f"Employee '{employee_name}' not found in database")
+        
+        existing_resume_data = result.data[0].get("resume_data", {})
+        
+        # Use the helper function to merge the data
+        merged_resume_data = merge_employee_data(new_resume_data, existing_resume_data)
+        
+        # Generate an embedding for the updated employee data
+        employee_text = json.dumps(merged_resume_data)
+        embedding = generate_embedding(employee_text)
+        
+        # Prepare data for Supabase
+        vector_data = {
+            "id": employee_id,
+            "employee_name": employee_name,
+            "file_id": merged_resume_data.get("file_id"),
+            "resume_data": merged_resume_data,
+            "embedding": embedding
+        }
+        
+        # Update in Supabase
+        result = supabase.table("employees").update(vector_data).eq("id", employee_id).execute()
+        
+        if hasattr(result, 'error') and result.error:
+            logger.error(f"Error updating employee in Supabase: {result.error}")
+            raise HTTPException(status_code=500, detail="Failed to update employee data")
+        
+        logger.info(f"Successfully updated employee: {employee_name}")
+        
+        # Get the updated employee details
+        updated_employee = get_employee_by_name(employee_name)
+        
+        if not updated_employee:
+            logger.error(f"Failed to retrieve employee after update: {employee_name}")
+            # Return a default employee as fallback
+            return create_default_employee(employee_name)
+        
+        return updated_employee
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating employee: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating employee: {str(e)}")
+
+# 9. Create or update a specific employee with predefined data
 @app.post("/api/fix_employee/{employee_name}")
 async def fix_employee(employee_name: str):
     """
     Create or update a specific employee with predefined data.
     This endpoint is used to fix specific employees that may have issues.
+    If employee already exists, the data will be merged.
     """
     try:
         logger.info(f"Fixing employee data for: {employee_name}")
         
+        # Check if employee already exists
+        existing_employee = get_employee_by_name(employee_name)
+        
         # Predefined data for specific employees
         if employee_name.lower() == "manish mardia":
             # Specific data for Manish Mardia
-            resume_data = format_employee_data(
+            new_resume_data = format_employee_data(
                 employee_name="Manish Mardia",
                 role="Senior Structural Engineer",
                 years_experience={
@@ -416,7 +728,7 @@ async def fix_employee(employee_name: str):
             )
         else:
             # Default data for other employees
-            resume_data = format_employee_data(
+            new_resume_data = format_employee_data(
                 employee_name=employee_name,
                 role="Employee",
                 years_experience={
@@ -425,11 +737,27 @@ async def fix_employee(employee_name: str):
                 }
             )
         
+        # If employee exists, merge the data
+        if existing_employee:
+            logger.info(f"Employee {employee_name} already exists, merging data")
+            
+            # Get existing data
+            from supabase_adapter import supabase
+            employee_id = employee_name.lower().replace(' ', '_')
+            result = supabase.table("employees").select("*").eq("id", employee_id).execute()
+            
+            if hasattr(result, 'error') and result.error:
+                logger.error(f"Error retrieving existing employee data: {result.error}")
+            elif result.data:
+                existing_resume_data = result.data[0].get("resume_data", {})
+                # Use the helper function to merge the data
+                new_resume_data = merge_employee_data(new_resume_data, existing_resume_data)
+        
         # Convert employee name to a valid id by replacing spaces with underscores
         employee_id = employee_name.lower().replace(' ', '_')
         
         # Generate embedding for the resume data
-        resume_text = json.dumps(resume_data)
+        resume_text = json.dumps(new_resume_data)
         embedding = generate_embedding(resume_text)
         
         # Store in Supabase
@@ -438,8 +766,8 @@ async def fix_employee(employee_name: str):
         vector_data = {
             "id": employee_id,
             "employee_name": employee_name,
-            "file_id": None,
-            "resume_data": resume_data,
+            "file_id": new_resume_data.get("file_id"),
+            "resume_data": new_resume_data,
             "embedding": embedding
         }
         
@@ -450,7 +778,10 @@ async def fix_employee(employee_name: str):
             logger.error(f"Error storing employee in Supabase: {result.error}")
             raise HTTPException(status_code=500, detail="Failed to store employee data")
         
-        logger.info(f"Successfully fixed employee data for: {employee_name}")
+        if existing_employee:
+            logger.info(f"Successfully updated employee data for: {employee_name}")
+        else:
+            logger.info(f"Successfully added new employee: {employee_name}")
         
         # Get the employee details to verify
         employee = get_employee_by_name(employee_name)
@@ -464,6 +795,106 @@ async def fix_employee(employee_name: str):
     except Exception as e:
         logger.error(f"Error fixing employee data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fixing employee data: {str(e)}")
+
+# 10. Merge duplicate employees
+@app.post("/api/merge_employees")
+async def merge_duplicate_employees(source_name: str, target_name: str):
+    """
+    Merge two employee records, copying data from source to target and then deleting the source.
+    This is useful for cleaning up duplicate entries.
+    
+    Args:
+        source_name: The name of the employee to merge from
+        target_name: The name of the employee to merge into
+    """
+    try:
+        logger.info(f"Merging employee '{source_name}' into '{target_name}'")
+        
+        # Get source employee
+        source_employee = get_employee_by_name(source_name)
+        if not source_employee:
+            logger.warning(f"Source employee not found: {source_name}")
+            raise HTTPException(status_code=404, detail=f"Source employee '{source_name}' not found")
+        
+        # Get target employee
+        target_employee = get_employee_by_name(target_name)
+        if not target_employee:
+            logger.warning(f"Target employee not found: {target_name}")
+            raise HTTPException(status_code=404, detail=f"Target employee '{target_name}' not found")
+        
+        # Get the source and target data from Supabase
+        from supabase_adapter import supabase
+        source_id = source_name.lower().replace(' ', '_')
+        target_id = target_name.lower().replace(' ', '_')
+        
+        source_result = supabase.table("employees").select("*").eq("id", source_id).execute()
+        target_result = supabase.table("employees").select("*").eq("id", target_id).execute()
+        
+        if hasattr(source_result, 'error') and source_result.error:
+            logger.error(f"Error retrieving source employee data: {source_result.error}")
+            raise HTTPException(status_code=500, detail="Failed to retrieve source employee data")
+            
+        if hasattr(target_result, 'error') and target_result.error:
+            logger.error(f"Error retrieving target employee data: {target_result.error}")
+            raise HTTPException(status_code=500, detail="Failed to retrieve target employee data")
+        
+        if not source_result.data:
+            logger.error(f"No data found for source employee: {source_name}")
+            raise HTTPException(status_code=404, detail=f"Source employee '{source_name}' not found in database")
+            
+        if not target_result.data:
+            logger.error(f"No data found for target employee: {target_name}")
+            raise HTTPException(status_code=404, detail=f"Target employee '{target_name}' not found in database")
+        
+        # Get the resume data
+        source_resume_data = source_result.data[0].get("resume_data", {})
+        target_resume_data = target_result.data[0].get("resume_data", {})
+        
+        # Merge the data
+        merged_resume_data = merge_employee_data(source_resume_data, target_resume_data)
+        
+        # Generate an embedding for the merged data
+        merged_text = json.dumps(merged_resume_data)
+        embedding = generate_embedding(merged_text)
+        
+        # Prepare data for Supabase
+        vector_data = {
+            "id": target_id,
+            "employee_name": target_name,
+            "file_id": merged_resume_data.get("file_id"),
+            "resume_data": merged_resume_data,
+            "embedding": embedding
+        }
+        
+        # Update target in Supabase
+        update_result = supabase.table("employees").update(vector_data).eq("id", target_id).execute()
+        
+        if hasattr(update_result, 'error') and update_result.error:
+            logger.error(f"Error updating target employee in Supabase: {update_result.error}")
+            raise HTTPException(status_code=500, detail="Failed to update target employee data")
+        
+        # Delete the source employee
+        delete_result = supabase.table("employees").delete().eq("id", source_id).execute()
+        
+        if hasattr(delete_result, 'error') and delete_result.error:
+            logger.error(f"Error deleting source employee: {delete_result.error}")
+            logger.warning("Target employee was updated but source employee could not be deleted")
+            return {
+                "message": f"Employee '{source_name}' was merged into '{target_name}' but could not be deleted",
+                "success": True
+            }
+        
+        logger.info(f"Successfully merged '{source_name}' into '{target_name}' and deleted '{source_name}'")
+        return {
+            "message": f"Employee '{source_name}' was successfully merged into '{target_name}' and deleted",
+            "success": True
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error merging employees: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error merging employees: {str(e)}")
 
 # Run the API server
 if __name__ == "__main__":
