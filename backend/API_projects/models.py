@@ -8,43 +8,58 @@ class YearCompleted(BaseModel):
 
 # Firm model
 class Firm(BaseModel):
-    firm_name: str
-    firm_location: str
-    role: str
+    firm_name: str = "Unknown"
+    firm_location: str = "Unknown"
+    role: str = "Unknown"
+
+# Title and Location model
+class TitleAndLocation(BaseModel):
+    title: Optional[str] = None
+    location: Optional[str] = None
+
+# Point of Contact model
+class PointOfContact(BaseModel):
+    email: Optional[str] = None
+    phone: Optional[str] = None
 
 # Base project model with common fields
 class ProjectBase(BaseModel):
-    title_and_location: str
-    year_completed: YearCompleted
-    project_owner: str
-    point_of_contact_name: str
-    point_of_contact: str
-    brief_description: str
-    firms_from_section_c: List[Firm]
+    title: Optional[str] = ""
 
 # Model for creating a new project
 class ProjectCreate(ProjectBase):
-    pass
+    title_and_location: Optional[TitleAndLocation] = None
+    project_owner: Optional[str] = None
+    brief_description: Optional[str] = None
+    point_of_contact: Optional[PointOfContact] = None
+    year_completed: Optional[YearCompleted] = None
+    firms_from_section_c: Optional[List[Firm]] = None
 
 # Model for updating an existing project
-class ProjectUpdate(BaseModel):
-    title_and_location: Optional[str] = None
-    year_completed: Optional[YearCompleted] = None
+class ProjectUpdate(ProjectBase):
+    title_and_location: Optional[TitleAndLocation] = None
     project_owner: Optional[str] = None
-    point_of_contact_name: Optional[str] = None
-    point_of_contact: Optional[str] = None
     brief_description: Optional[str] = None
+    point_of_contact: Optional[PointOfContact] = None
+    year_completed: Optional[YearCompleted] = None
     firms_from_section_c: Optional[List[Firm]] = None
 
 # Model for detailed project information
-class ProjectDetail(ProjectBase):
+class ProjectDetail(BaseModel):
     id: str
+    title: str = ""
+    title_and_location: Optional[TitleAndLocation] = None
+    project_owner: str = ""
+    brief_description: str = ""
+    point_of_contact: Optional[PointOfContact] = None
+    year_completed: Optional[YearCompleted] = None
+    firms_from_section_c: List[Firm] = []
 
 # Model for project search results
 class ProjectResponse(BaseModel):
     id: str
-    title_and_location: str
-    project_owner: str
+    title: str
+    project_owner: str = ""
     score: float = 1.0
 
 # Model for query request

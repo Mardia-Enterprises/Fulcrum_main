@@ -31,143 +31,138 @@ supabase_url = os.getenv("SUPABASE_PROJECT_URL")
 supabase_key = os.getenv("SUPABASE_PRIVATE_API_KEY")
 supabase = create_client(supabase_url, supabase_key)
 
-def format_project_data(project_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Format project data for response
-    """
-    # Copy the original data to avoid modifying it
-    formatted_data = dict(project_data)
-    
-    # Create ID from title if not present
-    if 'id' not in formatted_data and 'title_and_location' in formatted_data:
-        title = formatted_data['title_and_location']
-        formatted_data['id'] = title.lower().replace(' ', '_').replace(',', '').replace('.', '')[:50]
-    
-    # Ensure required fields exist
-    if 'year_completed' not in formatted_data:
-        formatted_data['year_completed'] = {
-            "professional_services": "Unknown",
-            "construction": "Unknown"
-        }
-    
-    # Return formatted data
-    return formatted_data
-
 def get_all_projects() -> List[ProjectResponse]:
     """
     Retrieve all projects from Supabase
     """
     try:
         # Directly query all projects from the projects table
-        logger.info("Querying Supabase for all projects")
+        logger.info("=== DATABASE: Querying Supabase for all projects ===")
         result = supabase.table('projects').select('id, title, project_data').execute()
         
         if hasattr(result, 'error') and result.error:
             logger.error(f"Error fetching projects from Supabase: {result.error}")
             return []
         
-        logger.info(f"Found {len(result.data)} projects")
+        logger.info(f"Found {len(result.data)} projects in Supabase database")
         
         projects = []
-        for item in result.data:
-            project_data = item.get('project_data', {})
-            
-            # Create project response
-            projects.append(
-                ProjectResponse(
-                    id=item.get('id', ''),
-                    title_and_location=project_data.get('title_and_location', 'Unknown'),
-                    project_owner=project_data.get('project_owner', 'Unknown'),
-                    score=1.0  # Default score for direct retrieval
-                )
-            )
         
+        for item in result.data:
+            try:
+                # Extract data
+                project_id = item.get('id', '')
+                title = item.get('title', '')
+                project_data = item.get('project_data', {})
+                
+                logger.info(f"Processing project: {project_id} - {title}")
+                
+                # Extract project owner from project_data if available
+                project_owner = ""
+                if isinstance(project_data, dict):
+                    project_owner = project_data.get('project_owner', '')
+                
+                # Create ProjectResponse with the new model format
+                projects.append(
+                    ProjectResponse(
+                        id=project_id,
+                        title=title if title else "Unknown Project",
+                        project_owner=project_owner,
+                        score=1.0
+                    )
+                )
+                
+            except Exception as item_error:
+                logger.error(f"Error processing project item: {str(item_error)}")
+                logger.error(f"Problematic item: {item}")
+                logger.exception(item_error)
+                continue
+        
+        logger.info(f"Returning {len(projects)} projects")
         return projects
-    
+        
     except Exception as e:
         logger.error(f"Error retrieving all projects: {str(e)}")
+        logger.exception(e)
         return []
 
 def get_project_by_id(project_id: str) -> Optional[ProjectDetail]:
     """
-    Retrieve a specific project by ID
+    Retrieve project details by ID from the database
+
+    Args:
+        project_id: The ID of the project to retrieve
+
+    Returns:
+        ProjectDetail object or None if not found
     """
     try:
-        logger.info(f"Retrieving project with ID: {project_id}")
+        logging.info(f"Retrieving project with ID: {project_id}")
         
         # Query Supabase for the project
-        result = supabase.table('projects').select('*').eq('id', project_id).execute()
-        
-        if hasattr(result, 'error') and result.error:
-            logger.error(f"Error fetching project from Supabase: {result.error}")
-            return None
+        result = supabase.table('projects').select('id,title,project_data').eq('id', project_id).execute()
         
         if not result.data:
-            logger.warning(f"Project with ID '{project_id}' not found")
+            logging.warning(f"No data returned for project ID: {project_id}")
             return None
-        
-        # Get project data
+            
         project_item = result.data[0]
+        logging.info(f"Retrieved project with ID: {project_item.get('id')}")
+        
+        # Extract basic fields
+        project_id = project_item.get('id')
+        title = project_item.get('title', '')
+        
+        # Extract and validate project_data
         project_data = project_item.get('project_data', {})
+        if not isinstance(project_data, dict):
+            logging.warning(f"Project data is not a dictionary: {type(project_data)}")
+            project_data = {}
         
-        # Format project data for response
-        formatted_data = format_project_data(project_data)
-        formatted_data['id'] = project_id
+        # Extract title_and_location
+        title_and_location = {}
+        if isinstance(project_data.get('title_and_location'), dict):
+            title_and_location = project_data.get('title_and_location', {})
         
-        # Validate all required fields are present with correct types
-        logger.info(f"Project data structure: {formatted_data.keys()}")
+        # Extract project_owner
+        project_owner = project_data.get('project_owner', '')
         
-        # Ensure firms_from_section_c is a list of objects with the right structure
-        if 'firms_from_section_c' in formatted_data:
-            firms = formatted_data['firms_from_section_c']
-            if not isinstance(firms, list):
-                formatted_data['firms_from_section_c'] = []
-            else:
-                # Validate each firm has the required structure
-                for i, firm in enumerate(firms):
-                    if not isinstance(firm, dict):
-                        firms[i] = {"firm_name": "Unknown", "firm_location": "Unknown", "role": "Unknown"}
-                    else:
-                        # Ensure required fields exist
-                        for field in ['firm_name', 'firm_location', 'role']:
-                            if field not in firm or not firm[field]:
-                                firm[field] = "Unknown"
-        else:
-            formatted_data['firms_from_section_c'] = []
+        # Extract brief_description
+        brief_description = project_data.get('brief_description', '')
         
-        # Ensure year_completed has the right structure
-        if 'year_completed' not in formatted_data or not isinstance(formatted_data['year_completed'], dict):
-            formatted_data['year_completed'] = {
-                'professional_services': None,
-                'construction': None
-            }
-        else:
-            # Ensure both fields exist
-            if 'professional_services' not in formatted_data['year_completed']:
-                formatted_data['year_completed']['professional_services'] = None
-            if 'construction' not in formatted_data['year_completed']:
-                formatted_data['year_completed']['construction'] = None
+        # Extract point_of_contact
+        point_of_contact = {}
+        if isinstance(project_data.get('point_of_contact'), dict):
+            point_of_contact = project_data.get('point_of_contact', {})
         
-        # Ensure all other required fields are present
-        required_fields = [
-            'title_and_location', 
-            'project_owner', 
-            'point_of_contact_name', 
-            'point_of_contact', 
-            'brief_description'
-        ]
+        # Extract year_completed
+        year_completed = {}
+        if isinstance(project_data.get('year_completed'), dict):
+            year_completed = project_data.get('year_completed', {})
         
-        for field in required_fields:
-            if field not in formatted_data or not formatted_data[field]:
-                formatted_data[field] = "Unknown" if field != 'brief_description' else "No description available"
+        # Extract firms_from_section_c
+        firms_from_section_c = []
+        if isinstance(project_data.get('firms_from_section_c'), list):
+            firms_from_section_c = project_data.get('firms_from_section_c', [])
+            
+        # Create ProjectDetail object
+        project_detail = ProjectDetail(
+            id=project_id,
+            title=title,
+            title_and_location=title_and_location,
+            project_owner=project_owner,
+            brief_description=brief_description,
+            point_of_contact=point_of_contact,
+            year_completed=year_completed,
+            firms_from_section_c=firms_from_section_c
+        )
         
-        logger.info(f"Returning project data with fields: {', '.join(formatted_data.keys())}")
+        logging.info(f"Successfully created ProjectDetail object for project: {project_id}")
+        return project_detail
         
-        # Create project detail response
-        return ProjectDetail(**formatted_data)
-    
     except Exception as e:
-        logger.error(f"Error retrieving project {project_id}: {str(e)}")
+        logging.error(f"Error retrieving project by ID '{project_id}': {str(e)}")
+        logging.exception(e)
         return None
 
 def update_project(project_id: str, project_update: ProjectUpdate) -> Optional[ProjectDetail]:

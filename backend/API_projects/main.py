@@ -51,42 +51,60 @@ async def root():
 
 # 1. Get all projects
 @app.get("/api/projects", response_model=ProjectList)
-async def list_all_projects():
+def list_projects():
     """
-    Get a list of all projects
+    List all available projects
     """
     try:
-        logger.info("Retrieving all projects")
+        logger.info("=== API ENDPOINT: Retrieving all projects ===")
+        
+        # Get projects from database
         projects = get_all_projects()
-        logger.info(f"Retrieved {len(projects)} projects")
-        return ProjectList(projects=projects)
+        
+        # Log detailed information about each project
+        logger.info(f"Retrieved {len(projects)} projects from database function")
+        for i, project in enumerate(projects):
+            logger.info(f"Project {i+1}: id={project.id}, title={project.title}, owner={project.project_owner}")
+        
+        # Create the response object
+        project_list = ProjectList(projects=projects)
+        
+        # Log the final response
+        logger.info(f"Final response contains {len(project_list.projects)} projects")
+        
+        return project_list
     
     except Exception as e:
         logger.error(f"Error retrieving projects: {str(e)}")
+        logger.exception(e)
         raise HTTPException(status_code=500, detail=f"Error retrieving projects: {str(e)}")
 
 # 2. Get specific project
 @app.get("/api/projects/{project_id}", response_model=ProjectDetail)
-async def get_project(project_id: str):
+def get_project(project_id: str):
     """
-    Get detailed information about a specific project
+    Retrieve a specific project by ID
     """
     try:
-        logger.info(f"Retrieving project details for: {project_id}")
+        logging.info(f"GET /api/projects/{project_id} - Retrieving project")
+        
+        # Get project from database
         project = get_project_by_id(project_id)
         
-        if not project:
-            logger.warning(f"Project not found: {project_id}")
+        if project is None:
+            logging.warning(f"Project '{project_id}' not found in database")
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
         
-        logger.info(f"Successfully retrieved project details for: {project_id}")
+        logging.info(f"Successfully retrieved project {project_id}")
         return project
-    
-    except HTTPException:
-        raise
+        
+    except HTTPException as he:
+        # Re-raise HTTP exceptions
+        raise he
     except Exception as e:
-        logger.error(f"Error retrieving project details: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving project details: {str(e)}")
+        logging.error(f"Error retrieving project {project_id}: {str(e)}")
+        logging.exception(e)
+        raise HTTPException(status_code=500, detail=f"Error retrieving project: {str(e)}")
 
 # 3. Create new project
 @app.post("/api/projects", response_model=ProjectDetail)
@@ -215,4 +233,4 @@ async def search_projects_by_owner(owner_text: str, limit: int = 10):
 # Run the API
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8001) 

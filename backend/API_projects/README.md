@@ -45,23 +45,39 @@ pip install fastapi uvicorn supabase openai python-dotenv mistralai
 
 ## Running the API
 
-Use the shell script to run the API using the existing virtual environment:
+This API is configured to run on port 8001 to avoid conflicts with other APIs that may be running on the default port 8000.
+
+### Using the script:
 
 ```bash
-cd backend
-./run_api.sh
+./run_projects_api.sh
 ```
 
-Alternatively, you can run it manually:
+This script will:
+1. Activate the virtual environment
+2. Install required dependencies
+3. Start the API server on port 8001
+
+### Manual setup:
 
 ```bash
-cd backend
-source .venv/bin/activate
-cd API_projects
+# Activate the virtual environment
+source ../.venv/bin/activate
+
+# Install required dependencies
+pip install -r requirements.txt
+
+# Run the API server
+export API_PORT=8001
 python run_api.py
 ```
 
-The API will be available at `http://localhost:8001`.
+You can then access the API at: http://localhost:8001
+
+### Environment Variables
+
+- `API_HOST`: Host to bind the server to (default: "0.0.0.0")
+- `API_PORT`: Port to run the server on (default: 8001)
 
 ## Processing PDF Files
 
