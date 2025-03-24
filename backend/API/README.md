@@ -174,6 +174,72 @@ Delete an employee by name.
 - **URL**: `/api/employees/{employee_name}`
 - **Method**: `DELETE`
 
+### Project Creation From Employee Data
+
+The API now includes endpoints to create projects from employee project data:
+
+#### Create Projects from a Single Employee
+
+```
+POST /api/create_projects_from_employee/{employee_name}
+```
+
+This endpoint extracts all projects from the specified employee's `relevant_projects` field and creates them as projects in the `section_f_projects` table. The project will include information such as:
+- Title and location
+- Project cost and fee (if available)
+- Project owner (if available)
+- Project scope as the brief description
+- The employee's role in the project
+- The employee's firm information
+
+**Response**:
+```json
+{
+  "status": "success",
+  "projects_created": [
+    {
+      "project_id": "project_title_location",
+      "title": "Project Title, Location"
+    },
+    ...
+  ]
+}
+```
+
+#### Create Projects from All Employees
+
+```
+POST /api/create_projects_from_all_employees
+```
+
+This endpoint iterates through all employees in the database and extracts their projects, creating them in the `section_f_projects` table.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "total_projects_created": 42,
+  "summary": {
+    "Employee Name 1": 3,
+    "Employee Name 2": 5,
+    ...
+  }
+}
+```
+
+### Testing Project Creation
+
+A test script is included to verify the project creation functionality without running the full API server:
+
+```bash
+cd backend
+source .venv/bin/activate  # On Unix/macOS
+cd API
+python test_project_extraction.py "Employee Name"
+```
+
+If no employee name is provided, it will default to "Michael Chopin" as a demo.
+
 ## Example Usage
 
 ### Query for Employees

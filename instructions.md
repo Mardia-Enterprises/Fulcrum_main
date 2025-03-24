@@ -1,78 +1,46 @@
-# Current Formatting:
-
-Found 5 results:
-Raw Search Results:
-Result 1 (Score: 0.6510)
-W912BV20R0005 Tulsa IDC SMALL BUSINESS_FINAL DRAFT.pdf
-Text: OTHER PROFESSION AL QUALIFICATIONS (Publications, Organizations, Training, Awards, Etc.) Mitch has experience as Sur vey Party Chief, Field Coordinator, Project Manager, and Survey Manager for a multi...
-Result 2 (Score: 0.6492)
-W912BV20R0005 Tulsa IDC SMALL BUSINESS_FINAL DRAFT.pdf
-Text: He has executed and supervised boundary, topographic, and control surveys; right -of-way mapping; interior and exterior improvement surveys; route surveys; and accident surveys for court litigations. ...
-Result 3 (Score: 0.6462)
-W912BV20R0005 Tulsa IDC SMALL BUSINESS_FINAL DRAFT.pdf
-Text: His main expertise is in medium -and lowvoltage power systems design and analysis. He also has experience in lighting, telecommunications, and fire alarm system design. 19. RELEVANT PROJECT S a (1) TI...
-Result 4 (Score: 0.6458)
-W912BV20R0005 Tulsa IDC SMALL BUSINESS_FINAL DRAFT.pdf
-Text: He understands USACE design requirements from his 8 years on the Fort Bliss Program having prepared civil infrastructure designs for $1.0B. Michael also has extensive experience in the design and mana...
-Result 5 (Score: 0.6452)
-W912BV20R0005 Tulsa IDC SMALL BUSINESS_FINAL DRAFT.pdf
-Text: Regardless if the JV prepares MI I estimates or utilizes our subconsultants from Michael Baker or EudaCorp , Mr. Daile will review all estimates for consistency. Michael Baker and EudaCorp maintain an...
-Enhanced Results:
-Summary on Michael Chopin:
-1. Professional Qualifications:
-- Experience as Survey Party Chief, Field Coordinator, Project Manager, and Survey Manager.
-- Executed and supervised various surveys including boundary, topographic, control, right-of-way mapping, and accident surveys.
-- Proficient in data research, boundary analysis, and preparing legal descriptions.
-2. Expertise:
-- Specializes in medium and low-voltage power systems design and analysis.
-- Experience in lighting, telecommunications, and fire alarm system design.
-3. Project Experience:
-- Managed projects like Maneuver Systems Sustainment Center, Phase 3, Main Building at Red River Army Depot, Texarkana, TX.
-4. USACE Design Requirements:
-- Understands US Army Corps of Engineers (USACE) design requirements from 8 years on the Fort Bliss Program.
-- Prepared civil infrastructure designs worth $1.0B.
-- Extensive experience in hydrology, hydraulics projects, roadway drainage analysis, bridge hydraulic studies, and stormwater management.
-5. Cost Estimation:
-- Involved in reviewing estimates for consistency, whether prepared in-house or by subconsultants from Michael Baker or EudaCorp.
-- Utilizes cost estimating libraries for various DoD, Civil Works, and CBP/DHS facilities and infrastructure components.
-
-Enhanced Results:
-Summary on Michael Chopin:
-1. Professional Qualifications:
-- Experience as Survey Party Chief, Field Coordinator, Project Manager, and Survey Manager.
-- Executed and supervised various types of surveys including boundary, topographic, and control surveys.
-- Involved in right-of-way mapping, interior and exterior improvement surveys, route surveys, and accident surveys for court litigations.
-2. Expertise and Projects:
-- Main expertise in medium- and low-voltage power systems design and analysis.
-- Experience in lighting, telecommunications, and fire alarm system design.
-- Involved in Maneuver Systems Sustainment Center, Phase 3, Main Building Red River Army Depot project in Texarkana, TX.
-3. USACE Design Experience:
-- Understands USACE design requirements from 8 years on the Fort Bliss Program.
-- Prepared civil infrastructure designs worth $1.0B.
-- Extensive experience in hydrology and hydraulics projects, roadway drainage analysis, bridge hydraulic studies, and permitting.
-4. Collaboration and Review:
-- Involved in reviewing estimates for consistency, regardless of whether the JV prepares MI I estimates or uses subconsultants from Michael Baker or EudaCorp.
-- Michael Baker and EudaCorp maintain an extensive cost estimating library for various facilities, infrastructure, and building components.
-
-
-# Here is new Expected Fromatting:
-
-Summary on Michael Chopin:
-1. Professional Qualifications:
-- Experience as Survey Party Chief, Field Coordinator, Project Manager, and Survey Manager.
-- Executed and supervised various types of surveys including boundary, topographic, and control surveys.
-- Involved in right-of-way mapping, interior and exterior improvement surveys, route surveys, and accident surveys for court litigations.
-2. Expertise and Projects:
-- Main expertise in medium- and low-voltage power systems design and analysis.
-- Experience in lighting, telecommunications, and fire alarm system design.
-- Involved in Maneuver Systems Sustainment Center, Phase 3, Main Building Red River Army Depot project in Texarkana, TX.
-3. USACE Design Experience:
-- Understands USACE design requirements from 8 years on the Fort Bliss Program.
-- Prepared civil infrastructure designs worth $1.0B.
-- Extensive experience in hydrology and hydraulics projects, roadway drainage analysis, bridge hydraulic studies, and permitting.
-4. Collaboration and Review:
-- Involved in reviewing estimates for consistency, regardless of whether the JV prepares MI I estimates or uses subconsultants from Michael Baker or EudaCorp.
-- Michael Baker and EudaCorp maintain an extensive cost estimating library for various facilities, infrastructure, and building components.
-
-References:
-File: W912BV20R0005 Tulsa IDC SMALL BUSINESS_FINAL DRAFT.pdf #Just display files in link format which a user can click onto to view the pdf, This file would be present in one of our Supabase Public buckets - "pdf-docs" or "section-e-resumes" or "section-f-resumes"
+{
+      "name": "Michael Chopin",
+      "role": "Project Manager",
+      "score": 1,
+      "education": "BS, Civil Engineering, University of New Orleans, 1991",
+      "years_experience": 31,
+      "relevant_projects": [
+        {
+          "fee": "$1.6M",
+          "cost": "$94.3M",
+          "role": [
+            "Project Manager"
+          ],
+          "scope": "Development of plans, specifications, cost estimates, and a design documentation report for 2,775 linear feet of a new 18 -foot-high pile supported concrete T-wall and 4,230 linear feet of a new earthen levee along the Harvey Canal. In addition, a new pile supported T-wall was used to provide frontal protection to the Hero Pumping Station. Air suppression on the horizontal pump discharge tubes and butterfly valves on the vertical pump discharge tubes were used on the Hero Pumping Station to prevent backflow. Three 35 -foot and one 60 -foot roller floodgates were required for access through the floodwall for various industrial sites. Numerous utility relocations were necessary to facilitate the flood protection features. The project was broken into two bid packages and engineering during advertising and construction services were provided.",
+          "title_and_location": [
+            "Harvey Canal Floodwalls, Frontal Protection, and Earthen Levees",
+            "Jefferson Parish, LA"
+          ]
+        },
+        {
+          "fee": "$9M",
+          "cost": "$75M",
+          "role": [
+            "Project Manager"
+          ],
+          "scope": "Development of hydrologic and hydraulic models and reports, permitting, plans and specifications, and cost estimates for a new nine-mile flood protection project. Design features include earthen levees, pile support concrete T-walls, drainage pumping stations, frontal protection T-walls and valves for the existing drainage pumping stations discharge lines, access roads, and a navigation structure consisting of a 15.5foot by 22.5 -foot vertical lift gate. The three new drainage pumping stations consist of one 300 CFS capacity station and one 500 CFS station made up of vertical axial/mix flow pumps driven by electric motors, and one 500 CFS capacity station made up of vertical pumps driven by diesel engines. In addition to the design, advertising, bidding, construction administration, and resident inspection services were provided. The project was constructed under multiple bid packages.",
+          "title_and_location": [
+            "Upper Barataria Risk Reduction / St. Charles Westbank Levee",
+            "St. Charles Parish, LA"
+          ]
+        },
+        {
+          "fee": "$4M",
+          "cost": "$40M",
+          "role": [
+            "Project Manager"
+          ],
+          "scope": "Development of plans and specifications, cost estimates, and design documentation reports for a new flood protection project with 2,100 linear feet of floodwalls (braced and T-wall), a new 2,000 CFS drainage pumping station, and frontal protection of the existing stations (pile supported T-wall) with both valves and sluice gates to prevent backflow. The new 2,000 CFS pumping station consists of two 1,000 CFS horizontal pumps with diesel engine drives. In addition, engineering during advertising and construction services were provided for several construction phases.",
+          "title_and_location": [
+            "Cousins Pump Station Complex",
+            "Lapalco, LA"
+          ]
+        }
+      ],
+      "matching_project_info": null
+    }

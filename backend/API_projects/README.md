@@ -157,6 +157,61 @@ Delete a project by title.
 - **URL**: `/api/projects/{project_title}`
 - **Method**: `DELETE`
 
+### Import Projects from Employee Data
+
+The API includes endpoints to import projects from employee data stored in the Employee API:
+
+#### Import Projects from a Specific Employee
+
+```
+POST /api/projects_from_employee_api/{employee_name}
+```
+
+This endpoint retrieves an employee from the Employees API and imports all of their projects into the Projects database. The projects will include information such as:
+- Title and location
+- Project fee and cost (if available)
+- Project owner (if available) 
+- Project scope as the brief description
+- The employee's role in the project
+- The employee's firm information
+
+**Response**:
+```json
+{
+  "status": "success",
+  "projects_imported": [
+    {
+      "project_id": "project_title_location",
+      "title": "Project Title, Location"
+    },
+    ...
+  ]
+}
+```
+
+#### Import Projects from All Employees
+
+```
+POST /api/projects_from_all_employees
+```
+
+This endpoint iterates through all employees in the Employees API and imports their projects into the Projects database.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "total_projects_imported": 42,
+  "summary": {
+    "Employee Name 1": 3,
+    "Employee Name 2": 5,
+    ...
+  }
+}
+```
+
+These endpoints are complementary to similar endpoints in the Employees API, providing a way to sync project data between both APIs.
+
 ## Example Usage
 
 ### Query for Projects

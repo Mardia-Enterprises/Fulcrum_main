@@ -43,6 +43,28 @@ from database import (
     format_employee_data
 )
 
+# Add resume_parser_f directory to path for project creation
+resume_parser_f_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../resume_parser_f"))
+sys.path.append(resume_parser_f_dir)
+# Ensure parent directory is also in path to avoid import issues
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+try:
+    from resume_parser_f.dataparser import upsert_project_in_supabase
+    logger.info(f"Successfully imported upsert_project_in_supabase from resume_parser_f")
+except ImportError as e:
+    logger.error(f"Error importing from resume_parser_f: {str(e)}")
+    logger.error(f"Current sys.path: {sys.path}")
+    # Provide a fallback implementation if import fails
+    def upsert_project_in_supabase(project_title, file_id, project_data):
+        logger.error("Using fallback implementation of upsert_project_in_supabase")
+        logger.error("Please fix the import path for resume_parser_f module")
+        return project_title.lower().replace(' ', '_').replace(',', '')
+
+# Import Supabase client for direct access
+from supabase_adapter import supabase
+
 # Create FastAPI app
 app = FastAPI(
     title="Employee Resume API",
@@ -1155,6 +1177,213 @@ async def merge_duplicate_employees(source_name: str, target_name: str):
     except Exception as e:
         logger.error(f"Error merging employees: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error merging employees: {str(e)}")
+
+@app.post("/api/create_projects_from_employee/{employee_name}")
+async def create_projects_from_employee(employee_name: str):
+    """
+    Extract projects from an employee's relevant_projects field and create them
+    in the projects database (section_f_projects table).
+    
+    Args:
+        employee_name: The name of the employee whose projects to extract
+        
+    Returns:
+        Dict with status and list of created projects
+    """
+    try:
+        logger.info(f"Extracting projects from employee: {employee_name}")
+        
+        # Get the employee data
+        employee_data = get_employee_by_name(employee_name)
+        if not employee_data:
+            raise HTTPException(status_code=404, detail=f"Employee '{employee_name}' not found")
+        
+        # Convert Pydantic model to dict if needed
+        if hasattr(employee_data, "dict"):
+            # It's a Pydantic model
+            employee_dict = employee_data.dict()
+        elif hasattr(employee_data, "get"):
+            # It's already a dict
+            employee_dict = employee_data
+        else:
+            # Try to extract attributes directly
+            employee_dict = {}
+            for attr in ["relevant_projects", "firm", "role"]:
+                if hasattr(employee_data, attr):
+                    employee_dict[attr] = getattr(employee_data, attr)
+        
+        # Extract relevant projects
+        relevant_projects = employee_dict.get("relevant_projects", [])
+        if not relevant_projects:
+            return {"status": "No projects found", "projects_created": []}
+        
+        # Track created projects
+        created_projects = []
+        
+        # Process each project
+        for project in relevant_projects:
+            # Skip if project is not a dict or doesn't have required fields
+            if not isinstance(project, dict):
+                logger.warning(f"Invalid project format for employee {employee_name}: {project}")
+                continue
+                
+            # Extract title and location from project
+            title_and_location = None
+            if "title_and_location" in project and project["title_and_location"]:
+                title_and_location = project["title_and_location"]
+            elif isinstance(project.get("title_and_location"), list) and len(project["title_and_location"]) >= 2:
+                # Handle case where title_and_location is a list with [title, location]
+                title_and_location = ", ".join(project["title_and_location"])
+            
+            if not title_and_location:
+                logger.warning(f"Missing title for project in employee {employee_name}: {project}")
+                continue
+            
+            # Create a project object structured for section_f_projects
+            project_data = {
+                "title_and_location": title_and_location,
+                "year_completed": {
+                    "professional_services": None,
+                    "construction": None
+                },
+                "project_owner": project.get("project_owner", "Not provided"),
+                "point_of_contact_name": "Not provided",
+                "point_of_contact_telephone_number": "Not provided",
+                "brief_description": project.get("scope", "Not provided"),
+                "firms_from_section_c_involved_with_this_project": []
+            }
+            
+            # Add fee and cost if available
+            if "fee" in project or "cost" in project:
+                project_data["budget"] = {
+                    "fee": project.get("fee", "Not provided"),
+                    "cost": project.get("cost", "Not provided")
+                }
+            
+            # Function to safely get firm information
+            def get_firm_info(key, default="Not provided"):
+                if hasattr(employee_dict.get("firm", {}), "get"):
+                    return employee_dict.get("firm", {}).get(key, default)
+                elif hasattr(employee_dict.get("firm", {}), key):
+                    return getattr(employee_dict.get("firm", {}), key)
+                return default
+            
+            # Add role information
+            if "role" in project:
+                if isinstance(project["role"], list):
+                    # If role is a list, create a firm entry for each role
+                    for role in project["role"]:
+                        project_data["firms_from_section_c_involved_with_this_project"].append({
+                            "firm_name": get_firm_info("Name"),
+                            "firm_location": get_firm_info("Location"),
+                            "role": role
+                        })
+                else:
+                    # Single role
+                    project_data["firms_from_section_c_involved_with_this_project"].append({
+                        "firm_name": get_firm_info("Name"),
+                        "firm_location": get_firm_info("Location"),
+                        "role": project["role"]
+                    })
+            
+            # Generate a unique file_id for the project
+            file_id = f"from_employee_{employee_name.replace(' ', '_').lower()}"
+            
+            # Get employee role safely
+            employee_role = employee_dict.get("role", "Not provided")
+            if not isinstance(employee_role, str) and hasattr(employee_role, "__str__"):
+                employee_role = str(employee_role)
+            
+            # Add the employee as a key person
+            project_data["key_personnel"] = [{
+                "name": employee_name,
+                "role": employee_role
+            }]
+            
+            # Ensure title_and_location is a string
+            if isinstance(title_and_location, list):
+                title_and_location = ", ".join(title_and_location)
+            
+            # Store the project in Supabase
+            project_id = upsert_project_in_supabase(title_and_location, file_id, project_data)
+            
+            # Add to list of created projects
+            created_projects.append({
+                "project_id": project_id,
+                "title": title_and_location
+            })
+        
+        return {
+            "status": "success",
+            "projects_created": created_projects
+        }
+    
+    except Exception as e:
+        logger.error(f"Error creating projects from employee {employee_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating projects: {str(e)}")
+
+@app.post("/api/create_projects_from_all_employees")
+async def create_projects_from_all_employees():
+    """
+    Extract projects from all employees' relevant_projects fields and create them
+    in the projects database (section_f_projects table).
+    
+    Returns:
+        Dict with status and summary of created projects
+    """
+    try:
+        logger.info("Creating projects from all employees")
+        
+        # Get all employees
+        employees = get_all_employees()
+        
+        if not employees:
+            return {"status": "No employees found", "summary": {}}
+        
+        results = {}
+        total_projects_created = 0
+        
+        # Process each employee
+        for employee in employees:
+            # Check if employee is a dict-like object or a Pydantic model
+            if hasattr(employee, "name"):
+                # It's a Pydantic model (EmployeeResponse)
+                employee_name = employee.name
+            elif hasattr(employee, "get"):
+                # It's a dictionary
+                employee_name = employee.get("name")
+            else:
+                # Try direct attribute access as fallback
+                try:
+                    employee_name = employee.name if hasattr(employee, "name") else str(employee)
+                except:
+                    logger.warning(f"Could not extract name from employee: {employee}")
+                    continue
+            
+            if not employee_name:
+                continue
+                
+            # Call the endpoint for a single employee
+            try:
+                result = await create_projects_from_employee(employee_name)
+                projects_created = result.get("projects_created", [])
+                results[employee_name] = len(projects_created)
+                total_projects_created += len(projects_created)
+                
+                logger.info(f"Created {len(projects_created)} projects for employee {employee_name}")
+            except Exception as e:
+                logger.error(f"Error processing employee {employee_name}: {str(e)}")
+                results[employee_name] = f"Error: {str(e)}"
+        
+        return {
+            "status": "success",
+            "total_projects_created": total_projects_created,
+            "summary": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating projects from all employees: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating projects: {str(e)}")
 
 # Run the API server
 if __name__ == "__main__":

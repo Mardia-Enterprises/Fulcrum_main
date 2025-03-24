@@ -694,6 +694,241 @@ async def add_project_manually(project: ProjectCreate):
         logger.error(f"Error adding project manually: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error adding project: {str(e)}")
 
+@app.post("/api/projects_from_employee_api/{employee_name}")
+async def import_projects_from_employee_api(employee_name: str):
+    """
+    Import projects from an employee in the employees API.
+    This is a bridge between the employee API and projects API.
+    
+    Args:
+        employee_name: The name of the employee whose projects to import
+        
+    Returns:
+        Dict with status and list of imported projects
+    """
+    try:
+        logger.info(f"Importing projects from employee API for: {employee_name}")
+        
+        # Import the employee API functions
+        try:
+            # Add API directory to path
+            api_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../API"))
+            if api_dir not in sys.path:
+                sys.path.append(api_dir)
+            
+            # Import the employee API functions
+            from API.database import get_employee_by_name
+            
+            # Get the employee data
+            employee_data = get_employee_by_name(employee_name)
+            if not employee_data:
+                raise HTTPException(status_code=404, detail=f"Employee '{employee_name}' not found")
+            
+            # Convert Pydantic model to dict if needed
+            if hasattr(employee_data, "dict"):
+                # It's a Pydantic model
+                employee_dict = employee_data.dict()
+            elif hasattr(employee_data, "get"):
+                # It's already a dict
+                employee_dict = employee_data
+            else:
+                # Try to extract attributes directly
+                employee_dict = {}
+                for attr in ["relevant_projects", "firm", "role"]:
+                    if hasattr(employee_data, attr):
+                        employee_dict[attr] = getattr(employee_data, attr)
+            
+            # Extract relevant projects
+            relevant_projects = employee_dict.get("relevant_projects", [])
+            if not relevant_projects:
+                return {"status": "No projects found", "projects_imported": []}
+            
+            # Track imported projects
+            imported_projects = []
+            
+            # Process each project
+            for project in relevant_projects:
+                # Skip if project is not a dict or doesn't have required fields
+                if not isinstance(project, dict):
+                    logger.warning(f"Invalid project format for employee {employee_name}: {project}")
+                    continue
+                    
+                # Extract title and location from project
+                title_and_location = None
+                if "title_and_location" in project and project["title_and_location"]:
+                    title_and_location = project["title_and_location"]
+                elif isinstance(project.get("title_and_location"), list) and len(project["title_and_location"]) >= 2:
+                    # Handle case where title_and_location is a list with [title, location]
+                    title_and_location = ", ".join(project["title_and_location"])
+                
+                if not title_and_location:
+                    logger.warning(f"Missing title for project in employee {employee_name}: {project}")
+                    continue
+                
+                # Create a project object structured for section_f_projects
+                project_data = {
+                    "title_and_location": title_and_location,
+                    "year_completed": {
+                        "professional_services": None,
+                        "construction": None
+                    },
+                    "project_owner": project.get("project_owner", "Not provided"),
+                    "point_of_contact_name": "Not provided",
+                    "point_of_contact_telephone_number": "Not provided",
+                    "brief_description": project.get("scope", "Not provided"),
+                    "firms_from_section_c_involved_with_this_project": []
+                }
+                
+                # Add fee and cost if available
+                if "fee" in project or "cost" in project:
+                    project_data["budget"] = {
+                        "fee": project.get("fee", "Not provided"),
+                        "cost": project.get("cost", "Not provided")
+                    }
+                
+                # Function to safely get firm information
+                def get_firm_info(key, default="Not provided"):
+                    if hasattr(employee_dict.get("firm", {}), "get"):
+                        return employee_dict.get("firm", {}).get(key, default)
+                    elif hasattr(employee_dict.get("firm", {}), key):
+                        return getattr(employee_dict.get("firm", {}), key)
+                    return default
+                
+                # Add role information
+                if "role" in project:
+                    if isinstance(project["role"], list):
+                        # If role is a list, create a firm entry for each role
+                        for role in project["role"]:
+                            project_data["firms_from_section_c_involved_with_this_project"].append({
+                                "firm_name": get_firm_info("Name"),
+                                "firm_location": get_firm_info("Location"),
+                                "role": role
+                            })
+                    else:
+                        # Single role
+                        project_data["firms_from_section_c_involved_with_this_project"].append({
+                            "firm_name": get_firm_info("Name"),
+                            "firm_location": get_firm_info("Location"),
+                            "role": project["role"]
+                        })
+                
+                # Generate a unique file_id for the project
+                file_id = f"from_employee_{employee_name.replace(' ', '_').lower()}"
+                
+                # Get employee role safely
+                employee_role = employee_dict.get("role", "Not provided")
+                if not isinstance(employee_role, str) and hasattr(employee_role, "__str__"):
+                    employee_role = str(employee_role)
+                
+                # Add the employee as a key person
+                project_data["key_personnel"] = [{
+                    "name": employee_name,
+                    "role": employee_role
+                }]
+                
+                # Ensure title_and_location is a string
+                if isinstance(title_and_location, list):
+                    title_and_location = ", ".join(title_and_location)
+                
+                # Store the project in Supabase
+                project_id = upsert_project_in_supabase(title_and_location, file_id, project_data)
+                
+                # Add to list of imported projects
+                imported_projects.append({
+                    "project_id": project_id,
+                    "title": title_and_location
+                })
+            
+            return {
+                "status": "success",
+                "projects_imported": imported_projects
+            }
+        
+        except ImportError as e:
+            logger.error(f"Error importing employee API functions: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error importing employee API: {str(e)}")
+        
+    except Exception as e:
+        logger.error(f"Error importing projects from employee {employee_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error importing projects: {str(e)}")
+
+@app.post("/api/projects_from_all_employees")
+async def import_projects_from_all_employees():
+    """
+    Import projects from all employees in the employees API.
+    This is a bridge between the employee API and projects API.
+    
+    Returns:
+        Dict with status and summary of imported projects
+    """
+    try:
+        logger.info("Importing projects from all employees")
+        
+        # Import the employee API functions
+        try:
+            # Add API directory to path
+            api_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../API"))
+            if api_dir not in sys.path:
+                sys.path.append(api_dir)
+            
+            # Import the employee API functions
+            from API.database import get_all_employees
+            
+            # Get all employees
+            employees = get_all_employees()
+            
+            if not employees:
+                return {"status": "No employees found", "summary": {}}
+            
+            results = {}
+            total_projects_imported = 0
+            
+            # Process each employee
+            for employee in employees:
+                # Check if employee is a dict-like object or a Pydantic model
+                if hasattr(employee, "name"):
+                    # It's a Pydantic model (EmployeeResponse)
+                    employee_name = employee.name
+                elif hasattr(employee, "get"):
+                    # It's a dictionary
+                    employee_name = employee.get("name")
+                else:
+                    # Try direct attribute access as fallback
+                    try:
+                        employee_name = employee.name if hasattr(employee, "name") else str(employee)
+                    except:
+                        logger.warning(f"Could not extract name from employee: {employee}")
+                        continue
+                
+                if not employee_name:
+                    continue
+                    
+                # Call the endpoint for a single employee
+                try:
+                    result = await import_projects_from_employee_api(employee_name)
+                    projects_imported = result.get("projects_imported", [])
+                    results[employee_name] = len(projects_imported)
+                    total_projects_imported += len(projects_imported)
+                    
+                    logger.info(f"Imported {len(projects_imported)} projects for employee {employee_name}")
+                except Exception as e:
+                    logger.error(f"Error processing employee {employee_name}: {str(e)}")
+                    results[employee_name] = f"Error: {str(e)}"
+            
+            return {
+                "status": "success",
+                "total_projects_imported": total_projects_imported,
+                "summary": results
+            }
+        
+        except ImportError as e:
+            logger.error(f"Error importing employee API functions: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error importing employee API: {str(e)}")
+        
+    except Exception as e:
+        logger.error(f"Error importing projects from all employees: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error importing projects: {str(e)}")
+
 # Run the API with uvicorn if executed directly
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True) 

@@ -35,6 +35,10 @@ def generate_embedding(text):
 def upsert_project_in_supabase(project_title, file_id, project_data):
     """Stores a project as a vector in Supabase."""
     
+    # Ensure project_title is a string
+    if isinstance(project_title, list):
+        project_title = ", ".join(project_title)
+    
     # Convert structured project data to a JSON string
     project_text = json.dumps(project_data, indent=4)
 
