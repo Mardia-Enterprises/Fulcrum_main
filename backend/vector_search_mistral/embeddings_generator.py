@@ -38,12 +38,14 @@ except ImportError:
 
 # Import Mistral with error handling
 try:
-    from mistralai import Mistral
+    from mistralai.client import MistralClient
+    from mistralai.models.embeddings import EmbeddingResponse
     MISTRAL_AVAILABLE = True
 except ImportError:
     logger.error("Mistral AI package not found. Install with: pip install mistralai>=1.5.0")
     MISTRAL_AVAILABLE = False
-    Mistral = None
+    MistralClient = None
+    EmbeddingResponse = None
 
 # Default settings
 DEFAULT_EMBEDDING_MODEL = "mistral-embed"
@@ -94,7 +96,7 @@ class EmbeddingsGenerator:
             raise ValueError("Mistral API key is required. Set MISTRAL_API_KEY environment variable or provide api_key parameter.")
         
         try:
-            self.client = Mistral(api_key=self.api_key)
+            self.client = MistralClient(api_key=self.api_key)
             logger.info(f"Initialized EmbeddingsGenerator with model: {model_name}")
         except Exception as e:
             logger.error(f"Error initializing Mistral client: {str(e)}")
@@ -156,13 +158,14 @@ class EmbeddingsGenerator:
         
         while retry_count < self.max_retries:
             try:
-                # Use the new embeddings.create API
-                response = self.client.embeddings.create(
+                # Use the embeddings.create API for mistralai 1.6.0+
+                response = self.client.embeddings(
                     model=self.model_name,
-                    inputs=texts
+                    input=texts
                 )
                 
                 # Extract and return the embedding data
+                # In newer versions, the response structure has changed
                 return [item.embedding for item in response.data]
                 
             except Exception as e:
@@ -209,8 +212,16 @@ class EmbeddingsGenerator:
             logger.warning("Empty query provided for embedding generation.")
             return [0.0] * 1024  # Return a zero vector of the expected dimension
         
-        embeddings = self.generate_embeddings([query])
-        return embeddings[0] if embeddings else [0.0] * 1024
+        try:
+            # Use the embeddings API for mistralai 1.6.0+
+            response = self.client.embeddings(
+                model=self.model_name,
+                input=[query]
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"Error generating query embedding: {str(e)}")
+            return [0.0] * 1024  # Return a zero vector as fallback
     
     def generate_embeddings_with_partial_results(self, texts: List[str]) -> Dict[str, Any]:
         """

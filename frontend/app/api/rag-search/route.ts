@@ -248,9 +248,16 @@ export async function POST(request: NextRequest) {
                   succeeded: false,
                   details: 'Module execution failed, but Python is available.'
                 });
-              } catch (finalError) {
-                console.error('Basic Python test also failed:', finalError);
-                throw new Error(`Cannot run any Python commands. There may be a fundamental issue with the Python installation or environment.`);
+              } catch (basicError) {
+                console.error('Even basic Python test failed:', basicError);
+                
+                // Last resort fallback
+                return NextResponse.json({ 
+                  answer: "I'm sorry, but I couldn't run the search engine. There seems to be an issue with the Python environment.",
+                  error: 'Python execution failed',
+                  succeeded: false,
+                  details: 'Basic Python execution failed'
+                });
               }
             }
           }
@@ -262,15 +269,25 @@ export async function POST(request: NextRequest) {
       throw new Error(`Command execution failed: ${execError.message}`);
     }
   } catch (error) {
-    console.error('Error processing RAG search:', error);
-    return NextResponse.json(
-      { 
-        error: 'Failed to process search request', 
-        details: error instanceof Error ? error.message : String(error),
-        message: "The server encountered an error processing your request. Please ensure the backend Python environment is correctly set up and the vector_search_mistral module is accessible.",
+    console.error('Error in RAG search:', error);
+    
+    // Try to check if mistralai package issue
+    try {
+      const { stdout } = await execPromise('cd ../ && source backend/.venv/bin/activate && pip list | grep mistralai');
+      const mistralVersion = stdout.trim();
+      
+      return NextResponse.json({ 
+        answer: `Error processing your request. There might be an issue with the mistralai package.\n\nInstalled version: ${mistralVersion}\n\nTry updating it with: pip install --upgrade mistralai>=1.5.0`,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        succeeded: false,
+        details: 'Possible mistralai version mismatch'
+      });
+    } catch (e) {
+      return NextResponse.json({ 
+        answer: "I'm sorry, but I couldn't process your request. There might be an issue with the search system.",
+        error: error instanceof Error ? error.message : 'Unknown error',
         succeeded: false
-      },
-      { status: 500 }
-    );
+      });
+    }
   }
 } 

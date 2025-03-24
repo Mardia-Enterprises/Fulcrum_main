@@ -46,6 +46,9 @@ def is_mistral_available() -> bool:
     """
     try:
         import mistralai
+        # Also check for the client module which is required
+        from mistralai.client import MistralClient
+        from mistralai.models.embeddings import EmbeddingResponse
         return True
     except ImportError:
         return False
