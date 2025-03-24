@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import openai
 
 # Configure logging
-from .utils import setup_logging
+from utils import setup_logging
 logger = setup_logging()
 
 # Load environment variables from root .env file

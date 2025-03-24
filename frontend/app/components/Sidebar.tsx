@@ -30,7 +30,7 @@ import { usePathname } from 'next/navigation'
 const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'Team', href: '/teams', icon: UsersIcon },
-  { name: 'Projects', href: '#', icon: FolderIcon },
+  { name: 'Projects', href: '/projects', icon: FolderIcon },
   { name: 'Calendar', href: '#', icon: CalendarIcon },
   { name: 'Documents', href: '#', icon: DocumentDuplicateIcon },
   { name: 'Reports', href: '#', icon: ChartPieIcon },

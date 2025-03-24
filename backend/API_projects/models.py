@@ -23,7 +23,16 @@ class ProjectResponse(BaseModel):
     project_owner: str
     score: float
     year_completed: Any = None
-    brief_description: str = None
+    brief_description: Optional[str] = None
+    
+    class Config:
+        """Configuration for the model"""
+        # Allow arbitrary types for fields
+        arbitrary_types_allowed = True
+        # Prevent validation errors for empty fields
+        validate_assignment = False
+        # Make fields optional
+        extra = "allow"
 
 class ProjectDetail(BaseModel):
     """Detailed project information"""

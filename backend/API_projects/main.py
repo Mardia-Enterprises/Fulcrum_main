@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional, Union
 from openai import OpenAI
 
 # Import utilities first so we can use setup_logging
-from .utils import generate_embedding, setup_logging
+from utils import generate_embedding, setup_logging
 
 # Configure logging
 logger = setup_logging()
@@ -26,31 +26,57 @@ if os.path.exists(env_path):
 else:
     logger.warning(f"Root .env file not found at {env_path}. Using system environment variables.")
 
+# Check for required environment variables
+required_env_vars = ["OPENAI_API_KEY", "SUPABASE_PROJECT_URL", "SUPABASE_PRIVATE_API_KEY"]
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+    logger.error("Please make sure these variables are set in your root .env file")
+    sys.exit(1)
+
 # Add resume_parser_f directory to path
 resume_parser_f_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../resume_parser_f"))
 sys.path.append(resume_parser_f_dir)
-from resume_parser_f.dataparser import extract_structured_data_with_mistral, upload_pdf_to_mistral, upsert_project_in_supabase
+try:
+    from resume_parser_f.dataparser import extract_structured_data_with_mistral, upload_pdf_to_mistral, upsert_project_in_supabase
+    resume_parser_available = True
+except ImportError:
+    logger.warning("resume_parser_f module not found. File upload functionality will be limited.")
+    resume_parser_available = False
+    
+    # Define stub functions to prevent errors
+    def extract_structured_data_with_mistral(pdf_url):
+        logger.error("extract_structured_data_with_mistral not available - resume_parser_f module missing")
+        return {"title_and_location": "Unknown", "brief_description": "Not available - resume_parser_f module missing"}
+        
+    def upload_pdf_to_mistral(file_path):
+        logger.error("upload_pdf_to_mistral not available - resume_parser_f module missing")
+        return None
+        
+    def upsert_project_in_supabase(project_title, file_id, project_data):
+        logger.error("upsert_project_in_supabase not available - resume_parser_f module missing")
+        return None
 
 # Import models
-from .models import (
+from models import (
     QueryRequest, 
-    ProjectResponse, 
-    ProjectList, 
-    ProjectDetail,
-    ProjectCreate,
-    SearchResponse
+    SearchResponse, 
+    ProjectCreate, 
+    ProjectDetail, 
+    ProjectList,
+    ProjectResponse
 )
 
 # Import database functions
-from .database import (
-    get_all_projects,
-    get_project_by_title,
+from database import (
+    get_all_projects, 
+    get_project_by_title, 
     delete_project_by_title,
     format_project_data
 )
 
 # Import Supabase client for direct access
-from .supabase_adapter import supabase
+from supabase_adapter import supabase
 
 # Create FastAPI app
 app = FastAPI(
@@ -179,7 +205,7 @@ async def search_projects(query_request: QueryRequest):
                 query_text = query_request.query
                 
                 # Get search results from Supabase
-                from .supabase_adapter import query_index
+                from supabase_adapter import query_index
                 
                 # Search across both semantic vectors and text search
                 search_results = query_index(query_text, top_k=20, match_threshold=0.01)
@@ -278,7 +304,18 @@ async def list_all_projects():
     try:
         logger.info("Fetching all projects")
         projects = get_all_projects()
-        return ProjectList(projects=projects)
+        logger.info(f"Retrieved {len(projects)} projects from database")
+        
+        # Log a sample of projects to help with debugging
+        if projects:
+            sample_size = min(3, len(projects))
+            logger.info(f"Sample of first {sample_size} projects:")
+            for i in range(sample_size):
+                logger.info(f"Project {i+1}: {projects[i].title_and_location}")
+        
+        result = ProjectList(projects=projects)
+        logger.info(f"Returning ProjectList with {len(result.projects)} projects")
+        return result
     except Exception as e:
         logger.error(f"Error fetching all projects: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching projects: {str(e)}")
@@ -507,6 +544,13 @@ async def add_project(
     try:
         logger.info(f"Processing project file upload: {file.filename}")
         
+        # Check if resume parser module is available
+        if not resume_parser_available:
+            raise HTTPException(
+                status_code=501, 
+                detail="File upload functionality is not available because the resume_parser_f module is missing."
+            )
+        
         # Create a temporary file to store the uploaded content
         temp_file_path = f"/tmp/{uuid.uuid4()}.pdf"
         
@@ -519,7 +563,7 @@ async def add_project(
             if not project_title:
                 project_title = os.path.splitext(file.filename)[0].replace("_", " ").title()
                 logger.info(f"Using derived project title: {project_title}")
-            
+                
             # Upload to Mistral for OCR processing
             pdf_url = upload_pdf_to_mistral(temp_file_path)
             logger.info(f"File uploaded to Mistral: {pdf_url}")
@@ -709,6 +753,13 @@ async def import_projects_from_employee_api(employee_name: str):
     try:
         logger.info(f"Importing projects from employee API for: {employee_name}")
         
+        # Check if resume parser is available (needed for upsert_project_in_supabase)
+        if not resume_parser_available:
+            return {
+                "status": "error",
+                "message": "resume_parser_f module is missing. Cannot import projects from employees."
+            }
+        
         # Import the employee API functions
         try:
             # Add API directory to path
@@ -717,7 +768,14 @@ async def import_projects_from_employee_api(employee_name: str):
                 sys.path.append(api_dir)
             
             # Import the employee API functions
-            from API.database import get_employee_by_name
+            try:
+                from API.database import get_employee_by_name
+            except ImportError:
+                logger.error("Employee API module not found")
+                return {
+                    "status": "error",
+                    "message": "Employee API module not found. Cannot import projects."
+                }
             
             # Get the employee data
             employee_data = get_employee_by_name(employee_name)
@@ -864,6 +922,13 @@ async def import_projects_from_all_employees():
     try:
         logger.info("Importing projects from all employees")
         
+        # Check if resume parser is available (needed for upsert_project_in_supabase)
+        if not resume_parser_available:
+            return {
+                "status": "error",
+                "message": "resume_parser_f module is missing. Cannot import projects from employees."
+            }
+        
         # Import the employee API functions
         try:
             # Add API directory to path
@@ -872,8 +937,15 @@ async def import_projects_from_all_employees():
                 sys.path.append(api_dir)
             
             # Import the employee API functions
-            from API.database import get_all_employees
-            
+            try:
+                from API.database import get_all_employees
+            except ImportError:
+                logger.error("Employee API module not found")
+                return {
+                    "status": "error",
+                    "message": "Employee API module not found. Cannot import projects."
+                }
+                
             # Get all employees
             employees = get_all_employees()
             
