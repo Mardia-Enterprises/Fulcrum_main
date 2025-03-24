@@ -24,6 +24,51 @@ interface EmployeeDetail {
   resume_data?: any;
 }
 
+// Function to normalize project titles to handle discrepancies between employee project titles and project page titles
+const normalizeProjectTitle = (title: string): string => {
+  if (!title) return '';
+  
+  // Replace multiple spaces with a single space
+  let normalized = title.replace(/\s+/g, ' ').trim();
+  
+  // Remove common punctuation that might differ between formats
+  normalized = normalized.replace(/[,;:.]/g, ' ').replace(/\s+/g, ' ').trim();
+  
+  // Convert to lowercase for case-insensitive comparison
+  return normalized.toLowerCase();
+};
+
+// Component for project links with better title handling
+const ProjectLink = ({ projectTitle }: { projectTitle: string }) => {
+  const [linkState, setLinkState] = useState<'default' | 'loading' | 'error'>('default');
+  const router = useRouter();
+  
+  // Extract project name from title_and_location which might be formatted as:
+  // "Project Name, Location" or just "Project Name"
+  const cleanProjectTitle = projectTitle.trim();
+  
+  const handleProjectNavigation = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setLinkState('loading');
+    
+    // Navigate to the project detail page
+    router.push(`/projects/${encodeURIComponent(cleanProjectTitle)}`);
+  };
+  
+  return (
+    <button
+      onClick={handleProjectNavigation}
+      disabled={linkState === 'loading'}
+      className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white 
+        ${linkState === 'loading' ? 'bg-gray-400' : 'bg-indigo-600 hover:bg-indigo-700'} 
+        focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500`}
+      title={`View details for project: ${cleanProjectTitle}`}
+    >
+      {linkState === 'loading' ? 'Loading...' : 'View Project Details'}
+    </button>
+  );
+};
+
 export default function EmployeeDetailsPage() {
   const params = useParams();
   const router = useRouter();
@@ -172,15 +217,25 @@ export default function EmployeeDetailsPage() {
                     <h2 className="text-xl font-semibold text-gray-900">Relevant Projects</h2>
                     <div className="mt-4 space-y-6">
                       {employeeDetails.relevant_projects.map((project, idx) => (
-                        <div key={idx} className="border border-gray-200 rounded-md p-4">
-                          <h3 className="font-medium text-lg">
-                            {project.title_and_location && project.title_and_location[0]}
-                          </h3>
-                          {project.title_and_location && project.title_and_location[1] && (
-                            <p className="text-gray-600">{project.title_and_location[1]}</p>
-                          )}
+                        <div key={idx} className="border border-gray-200 rounded-md p-4 hover:shadow-md transition-shadow">
+                          <div className="flex flex-col md:flex-row md:items-start md:justify-between">
+                            <div className="flex-1">
+                              <h3 className="font-medium text-lg text-indigo-700">
+                                {project.title_and_location && project.title_and_location[0]}
+                              </h3>
+                              {project.title_and_location && project.title_and_location[1] && (
+                                <p className="text-gray-600">{project.title_and_location[1]}</p>
+                              )}
+                            </div>
+                            
+                            {project.title_and_location && project.title_and_location[0] && (
+                              <div className="mt-3 md:mt-0 md:ml-4 flex-shrink-0">
+                                <ProjectLink projectTitle={project.title_and_location[0]} />
+                              </div>
+                            )}
+                          </div>
                           
-                          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                             {project.role && (
                               <div>
                                 <span className="text-sm font-medium text-gray-500">Role:</span>
