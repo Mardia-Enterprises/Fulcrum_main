@@ -44,6 +44,8 @@ class ProjectDetail(BaseModel):
     brief_description: Optional[str] = None
     firms_from_section_c_involved_with_this_project: Optional[Union[List[Dict[str, Any]], Any]] = None
     file_id: Optional[Union[List[str], str, Any]] = None
+    budget: Optional[Dict[str, Any]] = None
+    key_personnel: Optional[List[Dict[str, Any]]] = None
     
     class Config:
         """Configuration for the model"""

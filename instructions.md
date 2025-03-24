@@ -48,7 +48,18 @@
         "construction": null,
         "professional_services": null
       },
-      "brief_description": "As part of the New Orleans District Environmental Infrastructure Program, MSMM provided the engineering design of two piles supported above-ground 5 million gallons (MG) prestressed concrete storage tanks, a 14,000 gpm sewer pump station, and a CMU control building. The existing pump station will be connected to the new pump station with a $42^{\"}$ diameter pipe and overflow chamber with automatic slide gates to control when flows will be diverted. Mr. Seiler's responsibilities include project management, pump station design, and sizing of gravity sewer piping and force mains."
+      "brief_description": "As part of the New Orleans District Environmental Infrastructure Program, MSMM provided the engineering design of two piles supported above-ground 5 million gallons (MG) prestressed concrete storage tanks, a 14,000 gpm sewer pump station, and a CMU control building. The existing pump station will be connected to the new pump station with a $42^{\"}$ diameter pipe and overflow chamber with automatic slide gates to control when flows will be diverted. Mr. Seiler's responsibilities include project management, pump station design, and sizing of gravity sewer piping and force mains.",
+      "budget_info": {
+        "fee": "$1.6 M",
+        "cost": "TBD"
+      }
+    },
+    {
+      "title_and_location": "Harahan Drainage Pump to the River, Jefferson Parish, LA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
     },
     {
       "title_and_location": "Little Woods (RR100) Neighborhood FEMA Recovery Roads Repair, New Orleans, LA",
@@ -58,7 +69,11 @@
         "construction": null,
         "professional_services": null
       },
-      "brief_description": "Mr. Seiler was the Project Manager for the +200 block RR100 Little Woods FEMA Recovery Program project. General design features included mill and overlay, complete roadway replacement, ADA-compliant ramps at intersections, traffic engineering for intersections, and design of new sub-surface utilities, including drainage, sewer, and water infrastructure. Mr. Seiler was also responsible for coordinating with Entergy, Cox, and AT&T to mitigate utility conflicts."
+      "brief_description": "Mr. Seiler was the Project Manager for the +200 block RR100 Little Woods FEMA Recovery Program project. General design features included mill and overlay, complete roadway replacement, ADA-compliant ramps at intersections, traffic engineering for intersections, and design of new sub-surface utilities, including drainage, sewer, and water infrastructure. Mr. Seiler was also responsible for coordinating with Entergy, Cox, and AT&T to mitigate utility conflicts.",
+      "budget_info": {
+        "fee": "$1.5 M",
+        "cost": "$14 M"
+      }
     },
     {
       "title_and_location": "HSDRRS, USACE - Delivery of the 14.6B Hurricane and Storm Damage Risk Reduction System (HSDRRS)",
@@ -68,7 +83,11 @@
         "construction": null,
         "professional_services": null
       },
-      "brief_description": "As DPM for USACE, New Orleans (MVN), was responsible for the completion and the delivery of the ~$14.6B Greater New Orleans Hurricane and Storm Damage Risk Reduction System (HSDRRS), a 130-mile-long perimeter system of levees, flood walls, pump stations, navigation gates, and other structures as well as environmental mitigation to reduce flood risk to SE LA."
+      "brief_description": "As DPM for USACE, New Orleans (MVN), was responsible for the completion and the delivery of the ~$14.6B Greater New Orleans Hurricane and Storm Damage Risk Reduction System (HSDRRS), a 130-mile-long perimeter system of levees, flood walls, pump stations, navigation gates, and other structures as well as environmental mitigation to reduce flood risk to SE LA.",
+      "budget_info": {
+        "fee": "N/A",
+        "cost": "$14.6B"
+      }
     },
     {
       "title_and_location": "New Orleans Branch Chief - Project Management, USACE",
@@ -78,7 +97,11 @@
         "construction": null,
         "professional_services": null
       },
-      "brief_description": "Responsible for delivering USACE Civil Works projects in the areas of Flood Risk Management, Ecosystem Restoration, and Navigation. Areas of responsibility included project delivery under RESTORE Act and Lower MS River Diversions, LA Coastal Area (LCA) Ecosystem Restoration, Mississippi River and Tributaries (MR&T), Continuing Authorities Program (CAP), Flood Plain Management Services (FPMS) and Planning Assistance to States (PAS)."
+      "brief_description": "Responsible for delivering USACE Civil Works projects in the areas of Flood Risk Management, Ecosystem Restoration, and Navigation. Areas of responsibility included project delivery under RESTORE Act and Lower MS River Diversions, LA Coastal Area (LCA) Ecosystem Restoration, Mississippi River and Tributaries (MR&T), Continuing Authorities Program (CAP), Flood Plain Management Services (FPMS) and Planning Assistance to States (PAS).",
+      "budget_info": {
+        "fee": "N/A",
+        "cost": "multi-billion-dollar program"
+      }
     },
     {
       "title_and_location": "West Shore Lake Pontchartrain (WSLP) - FRM Construction Project, USACE",
@@ -88,7 +111,67 @@
         "construction": null,
         "professional_services": null
       },
-      "brief_description": "As MVN DPM, oversaw and ensured the advancement of the USACE-WSLP project for St. Charles and St. John Parishes to deliver an 18-mile risk reduction system including earthen levees, T-walls, pump stations and control structures law with the feasibility and Chief's report. Also drove advancement of small-scale non-structural solutions including various alignments of ring levees with pumps, access points, etc. for St. James Parish."
+      "brief_description": "As MVN DPM, oversaw and ensured the advancement of the USACE-WSLP project for St. Charles and St. John Parishes to deliver an 18-mile risk reduction system including earthen levees, T-walls, pump stations and control structures law with the feasibility and Chief's report. Also drove advancement of small-scale non-structural solutions including various alignments of ring levees with pumps, access points, etc. for St. James Parish.",
+      "budget_info": {
+        "fee": "N/A",
+        "cost": "$3.6B+"
+      }
+    },
+    {
+      "title_and_location": "Harvey Canal Floodwalls, Frontal Protection, and Earthen Levees, Jefferson Parish, LA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Upper Barataria Risk Reduction / St. Charles Westbank Levee, St. Charles Parish, LA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Cousins Pump Station Complex, Lapalco, LA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Cow Bayou Drainage Pump Station Complex Design, Orange, TX",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Southern University Drainage Outfall Ravine and Riverbank Instability Study, Baton Rouge, LA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Louisiana Intermodal Terminal, Port of New Orleans, Chalmette, LA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Periodic Inspections and Screenings, Orange, San Diego, and Santa Barbara Counties, CA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Gowanus Canal and Newtown Creek Alternative Study, New York, NY",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
     },
     {
       "title_and_location": "USACE Silver Jackets, Stormwater Watershed Management Study",
@@ -98,7 +181,25 @@
         "construction": null,
         "professional_services": null
       },
-      "brief_description": "The purpose of this project was to assess how flood stages will be affected by projected changes in future rain and sea-level conditions and recommend strategies for mitigating increased flood loss damages. Mr. Seiler performed the hydraulic modeling utilizing the EPA SWMM model to determine the existing and future conditions on over 50 percent of the Parish inside the levees for the 10-year, 25-year, and 100-year storm events."
+      "brief_description": "The purpose of this project was to assess how flood stages will be affected by projected changes in future rain and sea-level conditions and recommend strategies for mitigating increased flood loss damages. Mr. Seiler performed the hydraulic modeling utilizing the EPA SWMM model to determine the existing and future conditions on over 50 percent of the Parish inside the levees for the 10-year, 25-year, and 100-year storm events.",
+      "budget_info": {
+        "fee": "$350 K",
+        "cost": "NA"
+      }
+    },
+    {
+      "title_and_location": "Potomac Park Flood Protection, Washington, DC",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "East Garden Grove-Wintersburg Flood Risk Management System Analysis, Garden Grove, CA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
     },
     {
       "title_and_location": "Ascension Parish Environmental Infrastructure Wastewater Treatment Plant Design, Hillaryville, LA",
@@ -108,7 +209,46 @@
         "construction": null,
         "professional_services": null
       },
-      "brief_description": "As part of the New Orleans District Environmental Infrastructure Program, MSMM developed a design-bid-build package (plans and specs) for the creation of a 1.8 million gallon per day wastewater treatment plant. Services consisted of civil/structural/mechanical/electrical engineering, cost estimating using MCACES, and a full USACE review process."
+      "brief_description": "As part of the New Orleans District Environmental Infrastructure Program, MSMM developed a design-bid-build package (plans and specs) for the creation of a 1.8 million gallon per day wastewater treatment plant. Services consisted of civil/structural/mechanical/electrical engineering, cost estimating using MCACES, and a full USACE review process.",
+      "budget_info": {
+        "fee": "$1.4M",
+        "cost": "$21.5M"
+      }
+    },
+    {
+      "title_and_location": "Bogue Banks Beach Nourishment Master Plan, Carteret County, NC",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Port Freeport, Velasco Terminal Berths 8 and 9, Freeport, Texas",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "Hillaryville Levee Redesign, Pump Station, and Forcemain, Hillaryville, LA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "277K Levee Raise and Slope Flattening, and Delta Pump Station, Dallas, TX",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
+    },
+    {
+      "title_and_location": "New Orleans International Airport Drainage Pump Station, Kenner, LA",
+      "project_owner": "Error retrieving data",
+      "score": 0.1,
+      "year_completed": null,
+      "brief_description": "Error processing project data: 1 validation error for ProjectResponse\ntitle_and_location\n  Input should be a valid string [type=str..."
     }
   ]
 }

@@ -172,8 +172,8 @@ def get_all_projects() -> List[ProjectResponse]:
                 
                 # Create a ProjectResponse object - these fields are required by the model
                 project_response = {
-                    "title_and_location": title_and_location,
-                    "project_owner": project_owner,
+                    "title_and_location": str(title_and_location) if title_and_location is not None else "Unknown Project",
+                    "project_owner": str(project_owner) if project_owner is not None else "Not provided",
                     "score": 1.0,  # Default high score for listed projects
                 }
                 
@@ -181,7 +181,7 @@ def get_all_projects() -> List[ProjectResponse]:
                 if year_completed:
                     project_response["year_completed"] = year_completed
                 if brief_description:
-                    project_response["brief_description"] = brief_description
+                    project_response["brief_description"] = str(brief_description)
                 if budget_info:
                     project_response["budget_info"] = budget_info
                 
@@ -193,16 +193,16 @@ def get_all_projects() -> List[ProjectResponse]:
                 # Try to add a minimal project with just the ID to ensure all projects get returned
                 try:
                     fallback_id = item.get('id', f"unknown_{len(projects)}")
-                    fallback_title = item.get('project_key', fallback_id.replace('_', ' ').title())
+                    fallback_title = str(item.get('project_key', fallback_id.replace('_', ' ').title()))
                     projects.append(ProjectResponse(
                         title_and_location=fallback_title,
                         project_owner="Error retrieving data",
                         score=0.1,
-                        brief_description=f"Error processing project data: {str(project_error)[:100]}..."
+                        brief_description=f"Error retrieving data"
                     ))
-                except:
+                except Exception as fallback_error:
                     # Last resort - just log and continue
-                    logger.error(f"Failed to create even a fallback project for {item.get('id', 'unknown')}")
+                    logger.error(f"Failed to create fallback project: {str(fallback_error)}")
                     continue
         
         logger.info(f"Final project list count: {len(projects)}")
@@ -228,8 +228,46 @@ def get_project_by_title(project_title: str) -> Optional[ProjectDetail]:
         
         logger.info(f"Looking up project by title: {project_title}")
         
+        # Handle array-formatted titles for search purposes
+        search_title = project_title
+        if isinstance(search_title, str) and search_title.startswith("[") and search_title.endswith("]"):
+            try:
+                # Try to parse as a list
+                import ast
+                parsed_title = ast.literal_eval(search_title)
+                if isinstance(parsed_title, list):
+                    # Join the list elements if it's a list
+                    search_title = ", ".join(parsed_title)
+                    logger.info(f"Converted array title to string for search: {search_title}")
+                else:
+                    # Not a list, use regular approach
+                    search_title = project_title.lower().replace(' ', '_').replace(',', '')
+            except:
+                # If parsing fails, keep the original title for search
+                logger.warning(f"Failed to parse array-formatted title: {search_title}")
+        
         # Convert project title to a valid id format (matching storage format)
-        project_id = project_title.lower().replace(' ', '_').replace(',', '')
+        if isinstance(project_title, list):
+            # If it's already a list, join it
+            project_id = "_".join([part.lower().replace(' ', '_').replace(',', '') for part in project_title])
+        else:
+            # If it's an array-like string (['title', 'location']), extract parts
+            if isinstance(project_title, str) and project_title.startswith('[') and project_title.endswith(']'):
+                try:
+                    import ast
+                    parsed = ast.literal_eval(project_title)
+                    if isinstance(parsed, list):
+                        # Join the parts with underscores
+                        project_id = "_".join([part.lower().replace(' ', '_').replace(',', '') for part in parsed])
+                    else:
+                        # Fall back to the original string
+                        project_id = project_title.lower().replace(' ', '_').replace(',', '')
+                except:
+                    # Fall back to the original string
+                    project_id = project_title.lower().replace(' ', '_').replace(',', '')
+            else:
+                # Regular string
+                project_id = project_title.lower().replace(' ', '_').replace(',', '')
         
         # Try to fetch by ID first (most reliable)
         result = supabase.table('section_f_projects').select('*').eq('id', project_id).execute()
@@ -240,12 +278,26 @@ def get_project_by_title(project_title: str) -> Optional[ProjectDetail]:
         
         # If we didn't find by ID, try with ILIKE on project_key
         if not result.data:
-            logger.info(f"Project not found by ID, trying with ILIKE on project_key: {project_title}")
-            result = supabase.table('section_f_projects').select('*').ilike('project_key', f'%{project_title}%').execute()
+            logger.info(f"Project not found by ID, trying with ILIKE on project_key: {search_title}")
+            result = supabase.table('section_f_projects').select('*').ilike('project_key', f'%{search_title}%').execute()
             
             if hasattr(result, 'error') and result.error:
                 logger.error(f"Error fetching project by title: {result.error}")
                 return None
+        
+        # If we still didn't find anything, try searching by partial title
+        if not result.data:
+            # Break up the title into words and search for each word
+            words = search_title.split()
+            if len(words) > 1:
+                logger.info(f"Project not found by full title, trying with partial search")
+                # Try with first few significant words
+                search_term = ' '.join(words[:min(3, len(words))])
+                result = supabase.table('section_f_projects').select('*').ilike('project_key', f'%{search_term}%').execute()
+                
+                if hasattr(result, 'error') and result.error:
+                    logger.error(f"Error fetching project by partial title: {result.error}")
+                    return None
         
         # If still no results, return None
         if not result.data:
@@ -266,16 +318,34 @@ def get_project_by_title(project_title: str) -> Optional[ProjectDetail]:
                 logger.error(f"Failed to parse project_data string: {e}")
         
         # Create ProjectDetail object from the data
-        return ProjectDetail(
-            title_and_location=project_data.get('title_and_location', item.get('project_key', 'Unknown Project')),
-            year_completed=project_data.get('year_completed', {}),
-            project_owner=project_data.get('project_owner', 'Not provided'),
-            point_of_contact_name=project_data.get('point_of_contact_name', 'Not provided'),
-            point_of_contact_telephone_number=project_data.get('point_of_contact_telephone_number', 'Not provided'),
-            brief_description=project_data.get('brief_description', 'Not provided'),
-            firms_from_section_c_involved_with_this_project=project_data.get('firms_from_section_c_involved_with_this_project', []),
-            file_id=project_data.get('file_id', item.get('file_id', None))
-        )
+        # Make sure all fields are properly type-converted to avoid validation errors
+        title_and_location = project_data.get('title_and_location', item.get('project_key', 'Unknown Project'))
+        if not isinstance(title_and_location, str):
+            title_and_location = str(title_and_location)
+            
+        # Start with all fields from project_data to ensure we don't miss any
+        project_detail_data = {}
+        
+        # Add all fields from project_data
+        for key, value in project_data.items():
+            # Skip file_id as we'll handle it separately
+            if key != 'file_id':
+                project_detail_data[key] = value
+                
+        # Add essential fields with proper type conversion
+        project_detail_data['title_and_location'] = title_and_location
+        project_detail_data['project_owner'] = str(project_data.get('project_owner', 'Not provided'))
+        project_detail_data['brief_description'] = str(project_data.get('brief_description', 'Not provided'))
+        
+        # Add file_id from item if not in project_data
+        if 'file_id' not in project_detail_data or not project_detail_data['file_id']:
+            project_detail_data['file_id'] = item.get('file_id')
+            
+        # Log the fields being returned
+        logger.info(f"Returning project with fields: {', '.join(project_detail_data.keys())}")
+        
+        # Create and return the ProjectDetail object
+        return ProjectDetail(**project_detail_data)
     
     except Exception as e:
         logger.error(f"Error in get_project_by_title: {str(e)}")
@@ -297,8 +367,43 @@ def delete_project_by_title(project_title: str) -> bool:
         
         logger.info(f"Deleting project by title: {project_title}")
         
-        # Convert project title to a valid id format (matching storage format)
-        project_id = project_title.lower().replace(' ', '_').replace(',', '')
+        # Handle array-formatted titles
+        if isinstance(project_title, str) and project_title.startswith("[") and project_title.endswith("]"):
+            try:
+                # Try to parse as a list
+                import ast
+                parsed_title = ast.literal_eval(project_title)
+                if isinstance(parsed_title, list):
+                    # Try multiple approaches to find the project
+                    
+                    # First, try with the original format
+                    project_id = project_title.lower().replace(' ', '_').replace(',', '')
+                    result = supabase.table('section_f_projects').select('id').eq('id', project_id).execute()
+                    
+                    # If not found, try with joined format
+                    if not result.data:
+                        joined_title = ", ".join(parsed_title)
+                        project_id = joined_title.lower().replace(' ', '_').replace(',', '')
+                        result = supabase.table('section_f_projects').select('id').eq('id', project_id).execute()
+                        
+                        # If still not found, try with the first element only
+                        if not result.data and len(parsed_title) > 0:
+                            main_title = parsed_title[0]
+                            project_id = main_title.lower().replace(' ', '_').replace(',', '')
+                            result = supabase.table('section_f_projects').select('id').eq('id', project_id).execute()
+                    
+                    if not result.data:
+                        logger.warning(f"No project found with title in any format: {project_title}")
+                        return False
+                else:
+                    # Not a list, use regular approach
+                    project_id = project_title.lower().replace(' ', '_').replace(',', '')
+            except:
+                # If parsing fails, use regular approach
+                project_id = project_title.lower().replace(' ', '_').replace(',', '')
+        else:
+            # Regular string title
+            project_id = project_title.lower().replace(' ', '_').replace(',', '')
         
         # First, check if the project exists
         result = supabase.table('section_f_projects').select('id').eq('id', project_id).execute()

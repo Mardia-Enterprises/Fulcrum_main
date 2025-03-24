@@ -46,8 +46,6 @@ export default function TeamsPage() {
   const [targetEmployee, setTargetEmployee] = useState<string>('')
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [actionMessage, setActionMessage] = useState<{type: 'success' | 'error', text: string} | null>(null)
-  const [employeeDetails, setEmployeeDetails] = useState<EmployeeDetail | null>(null)
-  const [showDetailsModal, setShowDetailsModal] = useState(false)
 
   useEffect(() => {
     fetchEmployees()
@@ -144,53 +142,21 @@ export default function TeamsPage() {
       if (!response.ok) throw new Error(`Delete failed: ${response.status}`)
       
       setActionMessage({type: 'success', text: 'Employee deleted successfully'})
+      fetchEmployees() // Refresh the list
       setEmployeeToDelete('')
       setShowDeleteInput(false)
-      fetchEmployees() // Refresh the list
     } catch (err: any) {
       setActionMessage({type: 'error', text: `Error deleting employee: ${err.message}`})
-    }
-  }
-
-  const handleEmployeeCardClick = async (employee: Employee) => {
-    await fetchEmployeeDetails(employee.name);
-  };
-
-  async function fetchEmployeeDetails(employeeName: string) {
-    try {
-      setActionMessage(null)
-      setLoading(true)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      
-      const response = await fetch(`${apiUrl}/api/employees/${encodeURIComponent(employeeName)}`, {
-        method: 'GET',
-      })
-      
-      if (!response.ok) throw new Error(`Get details failed: ${response.status}`)
-      
-      const result = await response.json()
-      
-      // Log the structure to understand format issues
-      console.log('Employee details:', result)
-      
-      setEmployeeDetails(result)
-      setShowDetailsModal(true)
-      setActionMessage({
-        type: 'success', 
-        text: `Retrieved details for ${result.employee_name || result.name}`
-      })
-    } catch (err: any) {
-      console.error('Error fetching employee details:', err)
-      setActionMessage({type: 'error', text: `Error getting employee details: ${err.message}`})
-    } finally {
-      setLoading(false)
     }
   }
 
   const getEmployeeDetails = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!employeeToGet) return
-    await fetchEmployeeDetails(employeeToGet)
+    
+    // Redirect to employee details page
+    window.location.href = `/teams/${encodeURIComponent(employeeToGet)}`
+    
     setEmployeeToGet('')
     setShowGetInput(false)
   }
@@ -511,188 +477,6 @@ export default function TeamsPage() {
           </div>
         </div>
         
-        {showDetailsModal && employeeDetails && (
-          <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg shadow-xl overflow-hidden max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="px-6 py-4 bg-gray-100 flex justify-between items-center">
-                <h3 className="text-lg font-medium text-gray-900">
-                  Employee Details
-                </h3>
-                <button 
-                  onClick={() => setShowDetailsModal(false)}
-                  className="text-gray-400 hover:text-gray-500"
-                >
-                  <span className="sr-only">Close</span>
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              <div className="px-6 py-4">
-                <div className="mb-6">
-                  <h4 className="text-2xl font-bold">
-                    {employeeDetails.employee_name || employeeDetails.name}
-                  </h4>
-                  <p className="text-gray-600 text-lg">
-                    {Array.isArray(employeeDetails.role) 
-                      ? employeeDetails.role.join(', ') 
-                      : employeeDetails.role || 'No role specified'}
-                  </p>
-                </div>
-
-                <div className="space-y-6">
-                  {employeeDetails.years_experience && (
-                    <div>
-                      <h5 className="text-lg font-semibold text-gray-900">Experience</h5>
-                      <p className="mt-1">{employeeDetails.years_experience} years</p>
-                    </div>
-                  )}
-
-                  {employeeDetails.firm_name_and_location && employeeDetails.firm_name_and_location.length > 0 && (
-                    <div>
-                      <h5 className="text-lg font-semibold text-gray-900">Firm</h5>
-                      <div className="mt-1">
-                        {employeeDetails.firm_name_and_location.map((firm, idx) => (
-                          <p key={idx} className="text-gray-800">{firm}</p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {employeeDetails.education && (
-                    <div>
-                      <h5 className="text-lg font-semibold text-gray-900">Education</h5>
-                      {Array.isArray(employeeDetails.education) ? (
-                        <ul className="mt-1 list-disc list-inside">
-                          {employeeDetails.education.map((edu, idx) => (
-                            <li key={idx} className="text-gray-800">{edu}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="mt-1 text-gray-800">{employeeDetails.education}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {employeeDetails.current_professional_registration && 
-                   employeeDetails.current_professional_registration.length > 0 && (
-                    <div>
-                      <h5 className="text-lg font-semibold text-gray-900">Professional Registrations</h5>
-                      <ul className="mt-1 list-disc list-inside">
-                        {employeeDetails.current_professional_registration.map((reg, idx) => (
-                          <li key={idx} className="text-gray-800">{reg}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {employeeDetails.other_professional_qualifications && 
-                   employeeDetails.other_professional_qualifications.length > 0 && (
-                    <div>
-                      <h5 className="text-lg font-semibold text-gray-900">Other Qualifications</h5>
-                      <div className="mt-1 space-y-2">
-                        {employeeDetails.other_professional_qualifications.map((qual, idx) => (
-                          <p key={idx} className="text-gray-800">{qual}</p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {employeeDetails.relevant_projects && 
-                   employeeDetails.relevant_projects.length > 0 && (
-                    <div>
-                      <h5 className="text-lg font-semibold text-gray-900">Relevant Projects</h5>
-                      <div className="mt-2 space-y-4">
-                        {employeeDetails.relevant_projects.map((project, idx) => (
-                          <div key={idx} className="border border-gray-200 rounded-md p-4">
-                            <h6 className="font-medium text-lg">
-                              {project.title_and_location && project.title_and_location[0]}
-                            </h6>
-                            {project.title_and_location && project.title_and_location[1] && (
-                              <p className="text-gray-600">{project.title_and_location[1]}</p>
-                            )}
-                            
-                            <div className="mt-2 grid grid-cols-2 gap-2">
-                              {project.role && (
-                                <div>
-                                  <span className="text-sm font-medium text-gray-500">Role:</span>
-                                  <p>{Array.isArray(project.role) ? project.role.join(', ') : project.role}</p>
-                                </div>
-                              )}
-                              
-                              {project.fee && (
-                                <div>
-                                  <span className="text-sm font-medium text-gray-500">Fee:</span>
-                                  <p>{project.fee}</p>
-                                </div>
-                              )}
-                              
-                              {project.cost && (
-                                <div>
-                                  <span className="text-sm font-medium text-gray-500">Cost:</span>
-                                  <p>{project.cost}</p>
-                                </div>
-                              )}
-                            </div>
-                            
-                            {project.scope && (
-                              <div className="mt-3">
-                                <span className="text-sm font-medium text-gray-500">Scope:</span>
-                                <p className="mt-1 text-sm text-gray-800">{project.scope}</p>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Fallback to resume_data if available */}
-                  {employeeDetails.resume_data && !employeeDetails.years_experience && (
-                    <div className="space-y-4">
-                      {employeeDetails.resume_data["Years of Experience"] && (
-                        <div>
-                          <h5 className="font-semibold text-gray-900">Experience</h5>
-                          <div className="mt-1 grid grid-cols-2 gap-2">
-                            <div>
-                              <span className="text-sm text-gray-500">Total:</span>
-                              <p>{employeeDetails.resume_data["Years of Experience"].Total || 'N/A'}</p>
-                            </div>
-                            <div>
-                              <span className="text-sm text-gray-500">With Current Firm:</span>
-                              <p>{employeeDetails.resume_data["Years of Experience"]["With Current Firm"] || 'N/A'}</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* ... other resume_data fields ... */}
-                    </div>
-                  )}
-
-                  {!employeeDetails.resume_data && 
-                   !employeeDetails.education && 
-                   !employeeDetails.relevant_projects && 
-                   !employeeDetails.years_experience && (
-                    <div className="p-4 bg-yellow-50 rounded-md">
-                      <p className="text-yellow-700">Basic employee information only. No detailed resume data available.</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="bg-gray-50 px-6 py-3 flex justify-end">
-                <button
-                  type="button"
-                  className="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  onClick={() => setShowDetailsModal(false)}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        
         <h1 className="text-2xl font-bold mb-6">Team Members</h1>
 
         {loading ? (
@@ -714,7 +498,7 @@ export default function TeamsPage() {
             {employees.map((employee) => (
               <div 
                 key={employee.id || employee.name} 
-                className="bg-white shadow-md rounded-lg p-6 hover:shadow-lg transition-shadow cursor-pointer relative"
+                className="bg-white shadow-md rounded-lg p-6 hover:shadow-lg transition-shadow relative"
               >
                 <div 
                   className="absolute top-3 right-3 text-red-600 hover:text-red-800 z-10"
@@ -747,9 +531,9 @@ export default function TeamsPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
                 </div>
-                <div 
-                  className="flex flex-col items-center"
-                  onClick={() => handleEmployeeCardClick(employee)}
+                <Link 
+                  href={`/teams/${encodeURIComponent(employee.name)}`}
+                  className="flex flex-col items-center cursor-pointer"
                 >
                   <div className="h-20 w-20 rounded-full bg-indigo-100 flex items-center justify-center mb-4">
                     <span className="text-2xl text-indigo-600 font-medium">
@@ -758,7 +542,7 @@ export default function TeamsPage() {
                   </div>
                   <h2 className="text-xl font-semibold text-gray-800">{employee.name}</h2>
                   <p className="text-gray-600 mt-1">{employee.role}</p>
-                </div>
+                </Link>
               </div>
             ))}
           </div>

@@ -170,15 +170,33 @@ def create_default_project(title: str) -> ProjectDetail:
     to use as a fallback when the actual project data can't be retrieved properly
     """
     logger.info(f"Creating default project for: {title}")
+    
+    # Handle array-formatted titles
+    display_title = title
+    if isinstance(title, str) and title.startswith("[") and title.endswith("]"):
+        try:
+            # Try to parse as a list
+            import ast
+            parsed_title = ast.literal_eval(title)
+            if isinstance(parsed_title, list):
+                # Join the list elements if it's a list
+                display_title = ", ".join(parsed_title)
+                logger.info(f"Converted array title to string for display: {display_title}")
+        except:
+            # If parsing fails, keep the original title
+            pass
+    
     return ProjectDetail(
-        title_and_location=title,
+        title_and_location=display_title,
         year_completed={"professional_services": None, "construction": None},
         project_owner="Not available",
         point_of_contact_name="Not available",
         point_of_contact_telephone_number="Not available",
         brief_description="Not available",
         firms_from_section_c_involved_with_this_project=[],
-        file_id=None
+        file_id=None,
+        budget={"fee": "Not available", "cost": "Not available"},
+        key_personnel=[]
     )
 
 # Root endpoint
@@ -230,16 +248,33 @@ async def search_projects(query_request: QueryRequest):
                     year_completed = project_data.get("year_completed", {})
                     similarity_score = match.get("similarity", 0.0)
                     
+                    # Ensure all fields have correct types to avoid validation errors
+                    title_and_location = str(title_and_location) if title_and_location is not None else "Unknown Project"
+                    project_owner = str(project_owner) if project_owner is not None else "Not provided"
+                    brief_description = str(brief_description) if brief_description is not None else "Not provided"
+                    
                     # Add to results
-                    results.append(
-                        ProjectResponse(
-                            title_and_location=title_and_location,
-                            project_owner=project_owner,
-                            score=similarity_score,
-                            year_completed=year_completed,
-                            brief_description=brief_description
+                    try:
+                        results.append(
+                            ProjectResponse(
+                                title_and_location=title_and_location,
+                                project_owner=project_owner,
+                                score=similarity_score,
+                                year_completed=year_completed,
+                                brief_description=brief_description
+                            )
                         )
-                    )
+                    except Exception as validation_error:
+                        logger.error(f"Validation error creating ProjectResponse: {validation_error}")
+                        # Add a simplified response that won't fail validation
+                        results.append(
+                            ProjectResponse(
+                                title_and_location="Error in project data",
+                                project_owner="Error retrieving data",
+                                score=0.1,
+                                brief_description=f"Error retrieving data"
+                            )
+                        )
                 
                 # Sort results by score in descending order
                 results.sort(key=lambda x: x.score, reverse=True)
@@ -326,13 +361,48 @@ async def get_project(project_title: str):
     """Get detailed information about a specific project"""
     try:
         logger.info(f"Fetching project details for: {project_title}")
-        project = get_project_by_title(project_title)
+        
+        # Handle array-formatted titles
+        original_title = project_title
+        if project_title.startswith("[") and project_title.endswith("]"):
+            try:
+                # Try to parse as a list
+                import ast
+                parsed_title = ast.literal_eval(project_title)
+                if isinstance(parsed_title, list):
+                    # Try both raw array format and joined string
+                    logger.info(f"Project title appears to be an array format, trying multiple approaches")
+                    
+                    # Try with the original array format
+                    project = get_project_by_title(project_title)
+                    
+                    # If not found, try with joined string
+                    if not project:
+                        joined_title = ", ".join(parsed_title)
+                        logger.info(f"Trying with joined title: {joined_title}")
+                        project = get_project_by_title(joined_title)
+                        
+                        # If still not found, try with just the first element (main title)
+                        if not project and len(parsed_title) > 0:
+                            main_title = parsed_title[0]
+                            logger.info(f"Trying with main title only: {main_title}")
+                            project = get_project_by_title(main_title)
+                else:
+                    # Not a list, use regular lookup
+                    project = get_project_by_title(project_title)
+            except:
+                # If parsing fails, use regular lookup
+                logger.warning(f"Failed to parse array-formatted title: {project_title}")
+                project = get_project_by_title(project_title)
+        else:
+            # Regular title
+            project = get_project_by_title(project_title)
         
         if not project:
             # Create default fallback project
-            project = create_default_project(project_title)
-            logger.warning(f"Project not found, returning default: {project_title}")
-            raise HTTPException(status_code=404, detail=f"Project not found: {project_title}")
+            project = create_default_project(original_title)
+            logger.warning(f"Project not found, returning default: {original_title}")
+            raise HTTPException(status_code=404, detail=f"Project not found: {original_title}")
         
         return project
     except HTTPException:
@@ -435,19 +505,8 @@ async def update_project_manually(project_title: str, project: ProjectCreate):
         
         logger.info(f"Successfully updated project: {project_title}")
         
-        # Return the updated project
-        updated_project = ProjectDetail(
-            title_and_location=merged_data["title_and_location"],
-            year_completed=merged_data["year_completed"],
-            project_owner=merged_data["project_owner"],
-            point_of_contact_name=merged_data["point_of_contact_name"],
-            point_of_contact_telephone_number=merged_data["point_of_contact_telephone_number"],
-            brief_description=merged_data["brief_description"],
-            firms_from_section_c_involved_with_this_project=merged_data["firms_from_section_c_involved_with_this_project"],
-            file_id=file_id
-        )
-        
-        return updated_project
+        # Return the updated project with all fields from merged_data
+        return ProjectDetail(**merged_data)
     
     except HTTPException:
         raise
@@ -586,18 +645,7 @@ async def add_project(
             )
             
             # Create and return the project detail
-            project_detail = ProjectDetail(
-                title_and_location=structured_data.get("title_and_location", project_title),
-                year_completed=structured_data.get("year_completed", {}),
-                project_owner=structured_data.get("project_owner", "Not provided"),
-                point_of_contact_name=structured_data.get("point_of_contact_name", "Not provided"),
-                point_of_contact_telephone_number=structured_data.get("point_of_contact_telephone_number", "Not provided"),
-                brief_description=structured_data.get("brief_description", "Not provided"),
-                firms_from_section_c_involved_with_this_project=structured_data.get("firms_from_section_c_involved_with_this_project", []),
-                file_id=None  # No file in storage
-            )
-            
-            return project_detail
+            return ProjectDetail(**structured_data)
         
         finally:
             # Clean up temporary file
@@ -683,19 +731,8 @@ async def add_project_manually(project: ProjectCreate):
             
             logger.info(f"Successfully updated project: {project.title_and_location}")
             
-            # Return the updated project
-            updated_project = ProjectDetail(
-                title_and_location=merged_data["title_and_location"],
-                year_completed=merged_data["year_completed"],
-                project_owner=merged_data["project_owner"],
-                point_of_contact_name=merged_data["point_of_contact_name"],
-                point_of_contact_telephone_number=merged_data["point_of_contact_telephone_number"],
-                brief_description=merged_data["brief_description"],
-                firms_from_section_c_involved_with_this_project=merged_data["firms_from_section_c_involved_with_this_project"],
-                file_id=merged_data.get("file_id")
-            )
-            
-            return updated_project
+            # Return the updated project with all fields from merged_data
+            return ProjectDetail(**merged_data)
         
         # Otherwise, create a new project
         else:
@@ -718,19 +755,8 @@ async def add_project_manually(project: ProjectCreate):
             
             logger.info(f"Successfully added project: {project.title_and_location}")
             
-            # Return the new project
-            new_project = ProjectDetail(
-                title_and_location=project_data["title_and_location"],
-                year_completed=project_data["year_completed"],
-                project_owner=project_data["project_owner"],
-                point_of_contact_name=project_data["point_of_contact_name"],
-                point_of_contact_telephone_number=project_data["point_of_contact_telephone_number"],
-                brief_description=project_data["brief_description"],
-                firms_from_section_c_involved_with_this_project=project_data["firms_from_section_c_involved_with_this_project"],
-                file_id=None
-            )
-            
-            return new_project
+            # Return the new project with all fields from project_data
+            return ProjectDetail(**project_data)
     
     except HTTPException:
         raise
