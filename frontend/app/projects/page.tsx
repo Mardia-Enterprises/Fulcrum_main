@@ -28,6 +28,13 @@ interface ProjectDetail {
   }>;
 }
 
+// Helper to get the Projects API URL (port 8001)
+const getProjectsApiUrl = () => {
+  const baseApiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  // Replace port 8000 with 8001 for the Projects API
+  return baseApiUrl.replace(':8000', ':8001').replace('8000', '8001')
+}
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
@@ -52,11 +59,11 @@ export default function ProjectsPage() {
   async function fetchProjects() {
     try {
       setLoading(true)
-      // Try to fetch from your API
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
-      console.log('Fetching projects from:', `${apiUrl}/api/projects`)
+      // Use port 8001 for the Projects API
+      const projectsApiUrl = getProjectsApiUrl()
+      console.log('Fetching projects from:', `${projectsApiUrl}/api/projects`)
       
-      const response = await fetch(`${apiUrl}/api/projects`, {
+      const response = await fetch(`${projectsApiUrl}/api/projects`, {
         headers: { 'Accept': 'application/json' }
       })
       
@@ -86,7 +93,15 @@ export default function ProjectsPage() {
       }
     } catch (err: any) {
       console.error('Error fetching projects:', err)
-      setError(`Failed to load projects: ${err.message}`)
+      
+      // Provide more specific error messages
+      if (err.message.includes('Failed to fetch') || err.message.includes('Network error')) {
+        setError(`Projects API is not running. Please make sure the backend Projects API is running on port 8001.`)
+      } else if (err.message.includes('404')) {
+        setError(`Projects API endpoint not found. Make sure the API server is running on the correct path.`)
+      } else {
+        setError(`Failed to load projects: ${err.message}`)
+      }
     } finally {
       setLoading(false)
     }
@@ -104,7 +119,7 @@ export default function ProjectsPage() {
     
     try {
       setActionMessage(null)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+      const projectsApiUrl = getProjectsApiUrl()
       
       const formData = new FormData()
       formData.append('file', selectedFile)
@@ -112,7 +127,7 @@ export default function ProjectsPage() {
         formData.append('project_title', projectTitle)
       }
       
-      const response = await fetch(`${apiUrl}/api/projects`, {
+      const response = await fetch(`${projectsApiUrl}/api/projects`, {
         method: 'POST',
         body: formData,
       })
@@ -135,9 +150,9 @@ export default function ProjectsPage() {
     
     try {
       setActionMessage(null)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+      const projectsApiUrl = getProjectsApiUrl()
       
-      const response = await fetch(`${apiUrl}/api/projects/${encodeURIComponent(projectTitle)}`, {
+      const response = await fetch(`${projectsApiUrl}/api/projects/${encodeURIComponent(projectTitle)}`, {
         method: 'DELETE',
       })
       
@@ -159,9 +174,9 @@ export default function ProjectsPage() {
     try {
       setActionMessage(null)
       setLoading(true)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+      const projectsApiUrl = getProjectsApiUrl()
       
-      const response = await fetch(`${apiUrl}/api/projects/${encodeURIComponent(projectTitle)}`, {
+      const response = await fetch(`${projectsApiUrl}/api/projects/${encodeURIComponent(projectTitle)}`, {
         method: 'GET',
       })
       
@@ -192,9 +207,9 @@ export default function ProjectsPage() {
     
     try {
       setActionMessage(null)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+      const projectsApiUrl = getProjectsApiUrl()
       
-      const response = await fetch(`${apiUrl}/api/merge_projects?source_title=${encodeURIComponent(sourceProject)}&target_title=${encodeURIComponent(targetProject)}`, {
+      const response = await fetch(`${projectsApiUrl}/api/merge_projects?source_title=${encodeURIComponent(sourceProject)}&target_title=${encodeURIComponent(targetProject)}`, {
         method: 'POST'
       })
       
@@ -218,9 +233,9 @@ export default function ProjectsPage() {
     try {
       setActionMessage(null)
       setLoading(true)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+      const projectsApiUrl = getProjectsApiUrl()
       
-      const response = await fetch(`${apiUrl}/api/query`, {
+      const response = await fetch(`${projectsApiUrl}/api/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -537,6 +552,17 @@ export default function ProjectsPage() {
         ) : error ? (
           <div className="bg-white shadow-md rounded-lg p-8 text-center">
             <p className="text-red-500">{error}</p>
+            {error.includes('API is not running') && (
+              <div className="mt-4 p-4 bg-blue-50 text-blue-700 rounded-md text-left">
+                <h3 className="font-medium mb-2">Instructions to start the Projects API:</h3>
+                <ol className="list-decimal list-inside space-y-2">
+                  <li>Navigate to the backend directory in your terminal</li>
+                  <li>Activate your virtual environment (if using one)</li>
+                  <li>Run <code className="bg-blue-100 px-2 py-1 rounded">cd API_projects</code></li>
+                  <li>Run <code className="bg-blue-100 px-2 py-1 rounded">python run_api.py</code></li>
+                </ol>
+              </div>
+            )}
             <button
               onClick={() => fetchProjects()}
               className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
