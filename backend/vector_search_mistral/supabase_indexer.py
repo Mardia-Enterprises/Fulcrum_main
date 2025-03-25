@@ -444,7 +444,7 @@ class SupabaseIndexer:
         filter: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Search for similar documents using vector similarity.
+        Search for similar vectors in the Supabase database.
         
         Args:
             query_embedding: Vector embedding of the query
@@ -471,7 +471,7 @@ class SupabaseIndexer:
                 "match_count": top_k
             }
             
-            # Add filter conditions if provided
+            # Use different function based on whether filter is provided
             if filter:
                 filter_conditions = []
                 for key, value in filter.items():
@@ -484,12 +484,24 @@ class SupabaseIndexer:
                 if filter_conditions:
                     filter_string = " AND ".join(filter_conditions)
                     rpc_params["filter_string"] = filter_string
-            
-            # Call the match_documents function (must be created in Supabase SQL)
-            response = self.client.rpc(
-                "match_documents", 
-                rpc_params
-            ).execute()
+                    
+                    # Use the filtered version of the function
+                    response = self.client.rpc(
+                        "match_documents_filtered", 
+                        rpc_params
+                    ).execute()
+                else:
+                    # No filter conditions, use standard function
+                    response = self.client.rpc(
+                        "match_documents", 
+                        rpc_params
+                    ).execute()
+            else:
+                # No filter provided, use standard function
+                response = self.client.rpc(
+                    "match_documents", 
+                    rpc_params
+                ).execute()
             
             if hasattr(response, 'error') and response.error:
                 logger.error(f"Error during search: {response.error}")
