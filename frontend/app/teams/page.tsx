@@ -2,11 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { API_URL } from '../services/api'
 
 interface Employee {
   id?: string;
   name: string;
   role?: string;
+  email?: string;
+  imageUrl?: string;
 }
 
 interface EmployeeDetail {
@@ -54,11 +57,9 @@ export default function TeamsPage() {
   async function fetchEmployees() {
     try {
       setLoading(true)
-      // Try to fetch from your API
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      console.log('Fetching employees from:', `${apiUrl}/api/employees`)
+      console.log('Fetching employees from:', `${API_URL}/api/employees`)
       
-      const response = await fetch(`${apiUrl}/api/employees`, {
+      const response = await fetch(`${API_URL}/api/employees`, {
         headers: { 'Accept': 'application/json' }
       })
       
@@ -105,12 +106,10 @@ export default function TeamsPage() {
     
     try {
       setActionMessage(null)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      
       const formData = new FormData()
       formData.append('file', selectedFile)
       
-      const response = await fetch(`${apiUrl}/api/employees`, {
+      const response = await fetch(`${API_URL}/api/employees`, {
         method: 'POST',
         body: formData,
       })
@@ -133,9 +132,7 @@ export default function TeamsPage() {
     
     try {
       setActionMessage(null)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      
-      const response = await fetch(`${apiUrl}/api/employees/${encodeURIComponent(employeeToDelete)}`, {
+      const response = await fetch(`${API_URL}/api/employees/${encodeURIComponent(employeeToDelete)}`, {
         method: 'DELETE',
       })
       
@@ -167,9 +164,7 @@ export default function TeamsPage() {
     
     try {
       setActionMessage(null)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      
-      const response = await fetch(`${apiUrl}/api/employees/merge`, {
+      const response = await fetch(`${API_URL}/api/employees/merge`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -200,9 +195,7 @@ export default function TeamsPage() {
     try {
       setActionMessage(null)
       setLoading(true)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      
-      const response = await fetch(`${apiUrl}/api/query`, {
+      const response = await fetch(`${API_URL}/api/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -249,9 +242,7 @@ export default function TeamsPage() {
     try {
       setActionMessage(null)
       setLoading(true)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      
-      const response = await fetch(`${apiUrl}/api/roles/${encodeURIComponent(roleToFilter)}`, {
+      const response = await fetch(`${API_URL}/api/roles/${encodeURIComponent(roleToFilter)}`, {
         method: 'GET',
       })
       
@@ -510,9 +501,7 @@ export default function TeamsPage() {
                       (async () => {
                         try {
                           setActionMessage(null);
-                          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-                          
-                          const response = await fetch(`${apiUrl}/api/employees/${encodeURIComponent(employee.name)}`, {
+                          const response = await fetch(`${API_URL}/api/employees/${encodeURIComponent(employee.name)}`, {
                             method: 'DELETE',
                           });
                           

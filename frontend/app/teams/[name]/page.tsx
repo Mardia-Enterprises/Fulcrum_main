@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import ErrorBoundary from '../../components/ErrorBoundary'
+import { API_URL } from '../../services/api'
 
 interface EmployeeDetail {
   employee_name?: string;
@@ -87,17 +89,13 @@ export default function EmployeeDetailsPage() {
   async function fetchEmployeeDetails(name: string) {
     try {
       setLoading(true);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      
-      const response = await fetch(`${apiUrl}/api/employees/${encodeURIComponent(name)}`, {
+      const response = await fetch(`${API_URL}/api/employees/${encodeURIComponent(name)}`, {
         method: 'GET',
       });
       
       if (!response.ok) throw new Error(`Failed to load employee details: ${response.status}`);
       
       const result = await response.json();
-      
-      // Log the structure to understand format issues
       console.log('Employee details:', result);
       
       setEmployeeDetails(result);
