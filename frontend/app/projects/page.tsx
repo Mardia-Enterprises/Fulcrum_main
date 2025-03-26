@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import ErrorBoundary from '../components/ErrorBoundary'
+import { PROJECTS_API_URL } from '../services/api';
 
 interface Project {
   id?: string;
@@ -21,9 +22,7 @@ interface Project {
 
 // Helper to get the Projects API URL (port 8001)
 const getProjectsApiUrl = () => {
-  const baseApiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-  // Replace port 8000 with 8001 for the Projects API
-  return baseApiUrl.replace(':8000', ':8001').replace('8000', '8001')
+  return PROJECTS_API_URL;
 }
 
 export default function ProjectsPage() {

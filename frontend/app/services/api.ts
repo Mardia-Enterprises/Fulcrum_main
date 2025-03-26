@@ -1,4 +1,5 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const PROJECTS_API_URL = process.env.NEXT_PUBLIC_PROJECTS_API_URL || 'http://localhost:8001';
 
 export interface Employee {
   id?: string;
@@ -240,4 +241,6 @@ export const ragSearch = async (query: string): Promise<RagSearchResponse> => {
       error: error instanceof Error ? error.message : "Unknown error"
     };
   }
-}; 
+};
+
+export { API_URL, PROJECTS_API_URL }; 

@@ -122,6 +122,11 @@ python run_api.py
    - Click "New Secret" for each variable
    - Use the same variable names as in your `.env` file
    - Add all Firebase and backend configuration variables
+3. Add the following additional environment variables for API URLs:
+   ```
+   VITE_API_URL=https://fulcrumapp.replit.app
+   VITE_PROJECT_API_URL=https://fulcrumapp.replit.app
+   ```
 
 ### Configuration Steps
 
@@ -140,7 +145,30 @@ pip install -r requirements.txt
 
 2. Create a `.replit` file in the root directory with the following content:
 ```
+modules = ["python-3.12", "nodejs-20", "bash", "nodejs-23"]
 run = "bash start.sh"
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+run = ["sh", "-c", "bash start.sh"]
+build = ["sh", "-c", "cd frontend && npm install"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+[[ports]]
+localPort = 3001
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
+
+[[ports]]
+localPort = 8001
+externalPort = 3000
 ```
 
 3. Create a `start.sh` file in the root directory:
@@ -160,18 +188,58 @@ wait
 chmod +x start.sh
 ```
 
+### Port Configuration in Replit
+
+The port configuration in the `.replit` file maps the services as follows:
+
+- Frontend (Vite): 
+  - Local port: 3000
+  - External port: 80 (main application URL)
+- Main API:
+  - Local port: 8000
+  - External port: 8000
+- Projects API:
+  - Local port: 8001
+  - External port: 3000
+- Additional port 3001 for other services
+
+### API URL Configuration
+
+When deploying to Replit, ensure that:
+
+1. All API calls in the frontend code use environment variables instead of hardcoded localhost URLs:
+   ```javascript
+   // Instead of:
+   // fetch('http://localhost:8000/api/...)
+   
+   // Use:
+   fetch(`${import.meta.env.VITE_API_URL}:8000/api/...`)
+   ```
+
+2. Update CORS settings in both API services to allow requests from your Replit domain:
+   ```python
+   origins = [
+       "https://fulcrumapp.replit.app",
+       "http://localhost:3000",  # Keep for local development
+   ]
+   ```
+
 ### Running on Replit
 
 1. Click the "Run" button in Replit
 2. The application will start all three services automatically
-3. Replit will provide you with a URL where your application is deployed
+3. Access your application at `https://fulcrumapp.replit.app`
 
 ### Important Notes
 
 - Ensure all environment variables are properly set in Replit's Secrets
-- The frontend will run on the Replit-provided URL
-- Backend services will run on different ports as configured in your API files
-- Make sure to update any CORS settings in your backend to allow requests from your Replit domain
+- The frontend will be accessible at the main Replit URL (https://fulcrumapp.replit.app)
+- API services will be accessible at:
+  - Main API: https://fulcrumapp.replit.app:8000
+  - Projects API: https://fulcrumapp.replit.app:3000
+- Double-check all API calls in the frontend code to ensure they use environment variables
+- Monitor the Replit console for any port-related errors
+- If you encounter CORS issues, verify that the CORS configuration in both APIs includes your Replit domain
 
 ## Technologies Used
 
