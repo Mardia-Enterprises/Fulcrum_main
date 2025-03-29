@@ -24,7 +24,7 @@ else:
 def run_server():
     """Run the FastAPI server"""
     # Get the port from environment variable if set, otherwise use default
-    port = int(os.getenv("API_PROJECTS_PORT", "8001"))
+    port = int(os.getenv("API_PROJECTS_PORT", "3001"))
     host = os.getenv("API_HOST", "0.0.0.0")
     
     logger.info(f"Starting Project API server on {host}:{port}")

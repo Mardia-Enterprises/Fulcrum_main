@@ -1385,7 +1385,7 @@ async def create_projects_from_all_employees():
         logger.error(f"Error creating projects from all employees: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating projects: {str(e)}")
 
-# Run the API server
+# Run the API with uvicorn if executed directly
 if __name__ == "__main__":
     logger.info("Starting API server...")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("main:app", host="0.0.0.0", port=3000, reload=True) 

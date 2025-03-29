@@ -1,0 +1,21 @@
+modules = ["python-3.12", "nodejs-20", "bash", "nodejs-23"]
+run = "bash start.sh"
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+run = ["sh", "-c", "bash start.sh"]
+build = ["sh", "-c", "cd frontend && npm install"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+[[ports]]
+localPort = 3001
+externalPort = 8080
+
+[[ports]]
+localPort = 3002
+externalPort = 8081 

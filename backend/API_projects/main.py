@@ -1029,4 +1029,5 @@ async def import_projects_from_all_employees():
 
 # Run the API with uvicorn if executed directly
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True) 
+    logger.info("Starting Projects API server...")
+    uvicorn.run("main:app", host="0.0.0.0", port=3001, reload=True) 
