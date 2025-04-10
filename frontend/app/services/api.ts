@@ -243,4 +243,49 @@ export const ragSearch = async (query: string): Promise<RagSearchResponse> => {
   }
 };
 
+// Search engine using OLAP_QueryEngine
+export const searchEngine = async (query: string): Promise<RagSearchResponse> => {
+  try {
+    console.log(`Performing search engine query: ${query}`);
+    
+    // Call our new search engine API route
+    const response = await fetch(`/api/search-engine`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ query }),
+    });
+    
+    const data = await response.json();
+    console.log('Search engine results received:', data);
+    
+    if (!response.ok) {
+      return {
+        answer: data.message || "Error executing search engine. Please try again.",
+        succeeded: false,
+        error: data.error,
+        details: data.details
+      };
+    }
+    
+    return {
+      answer: data.answer || "No information found for your query.",
+      fullOutput: data.fullOutput,
+      succeeded: data.succeeded !== false
+    };
+  } catch (error) {
+    console.error('Error performing search engine query:', error);
+    
+    return {
+      answer: error instanceof Error 
+        ? `Error: ${error.message}. Please try again.` 
+        : "An unexpected error occurred. Please try again.",
+      succeeded: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+};
+
 export { API_URL, PROJECTS_API_URL }; 

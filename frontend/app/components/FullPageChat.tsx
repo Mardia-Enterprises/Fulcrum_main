@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import config from '../config';
-import { ragSearch, RagSearchResponse } from '../services/api';
+import { searchEngine, RagSearchResponse } from '../services/api';
 import Link from 'next/link';
 
 interface Message {
@@ -201,11 +201,11 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
     setLoading(true);
     setError(null);
     
-    console.log(`Sending query to RAG search: ${userMessage}`);
+    console.log(`Sending query to search engine: ${userMessage}`);
     
     try {
-      const response: RagSearchResponse = await ragSearch(userMessage);
-      console.log('RAG response received:', response);
+      const response: RagSearchResponse = await searchEngine(userMessage);
+      console.log('Search engine response received:', response);
       
       if (!response.succeeded) {
         throw new Error(response.error || 'Failed to get a response');
@@ -213,97 +213,40 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
       
       // Format the answer for better display
       let formattedAnswer = response.answer || "I couldn't find any relevant information.";
-      let fileReferences: string[] = [];
       
-      // Extract file references from raw output if available
-      if (response.fullOutput) {
-        // First try to extract filenames from "File:" lines
-        const fileLines = response.fullOutput.match(/File: ([^:\n]+\.pdf)/g);
-        if (fileLines) {
-          fileReferences = fileLines.map(line => {
-            return line.replace(/File: /, '').trim();
-          });
-        }
-        
-        // Then try to extract from "Result X (Score: Y)" format with associated text
-        const resultLines = response.fullOutput.split('\n');
-        const fileRefMap = new Map<string, string>();
-        
-        for (let i = 0; i < resultLines.length; i++) {
-          const line = resultLines[i].trim();
-          
-          // Look for result lines with score
-          if (line.match(/^Result \d+ \(Score: [\d.]+\)$/i) && i + 1 < resultLines.length) {
-            const nextLine = resultLines[i + 1].trim();
-            
-            // If next line is a PDF filename
-            if (nextLine && nextLine.endsWith('.pdf')) {
-              // Check if followed by Text: line
-              let textContent = '';
-              if (i + 2 < resultLines.length && resultLines[i + 2].trim().startsWith('Text:')) {
-                textContent = resultLines[i + 2].trim().substring(5).trim();
-                fileRefMap.set(nextLine, textContent);
-              }
-              
-              // Add to file references if not already there
-              if (!fileReferences.includes(nextLine)) {
-                fileReferences.push(nextLine);
-              }
-            }
-          }
-        }
-        
-        // Remove duplicates
-        fileReferences = Array.from(new Set(fileReferences));
-        
-        // Store the text content in the metadata
-        const metadata = {
-          usingFallback: response.usingFallback ? true : false,
-          fileReferences: fileReferences,
-          fileContents: Object.fromEntries(fileRefMap)
-        };
-        
-        // Clean up the response text
-        formattedAnswer = formattedAnswer
-          .replace(/^```\s*|\s*```$/g, '') // Remove code blocks if present
-          .trim();
-        
-        // Add system response to chat with the enhanced metadata
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: formattedAnswer,
-          timestamp: new Date(),
-          isUser: false,
-          text: formattedAnswer,
-          metadata
-        };
-        
-        const finalMessages = [...updatedMessages, assistantMessage];
-        setMessages(finalMessages);
-        updateSessionMessages(currentSessionId, finalMessages);
-      }
-    } catch (err) {
-      console.error('Error in RAG search:', err);
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
-      
-      // Add error message to chat
-      const errorMessage = err instanceof Error 
-        ? `Sorry, I encountered an error: ${err.message}` 
-        : 'Sorry, I encountered an error while processing your request.';
-        
-      const errorAssistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
+      // Add assistant message to chat
+      const assistantMessage: Message = {
+        id: Date.now().toString(),
         role: 'assistant',
-        content: errorMessage,
+        content: formattedAnswer,
         timestamp: new Date(),
         isUser: false,
-        text: errorMessage
+        text: formattedAnswer,
+        metadata: {
+          fileContents: {}
+        }
       };
       
-      const finalMessages = [...updatedMessages, errorAssistantMessage];
-      setMessages(finalMessages);
-      updateSessionMessages(currentSessionId, finalMessages);
+      const newMessages = [...updatedMessages, assistantMessage];
+      setMessages(newMessages);
+      updateSessionMessages(currentSessionId, newMessages);
+    } catch (err) {
+      console.error('Error in chat processing:', err);
+      setError(err instanceof Error ? err.message : 'An unknown error occurred');
+      
+      // Add error message to chat
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `Error: ${err instanceof Error ? err.message : 'An unknown error occurred'}. Please try again.`,
+        timestamp: new Date(),
+        isUser: false,
+        text: `Error: ${err instanceof Error ? err.message : 'An unknown error occurred'}. Please try again.`
+      };
+      
+      const newMessages = [...updatedMessages, errorMessage];
+      setMessages(newMessages);
+      updateSessionMessages(currentSessionId, newMessages);
     } finally {
       setLoading(false);
     }
@@ -321,6 +264,14 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
     } else {
       return date.toLocaleDateString();
     }
+  };
+
+  // Handle markdown links in the source pattern ([text](url))
+  const processMarkdownLinks = (line: string) => {
+    // Replace all markdown links with actual HTML links
+    return line.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline">${text}</a>`;
+    });
   };
 
   return (
@@ -437,7 +388,148 @@ const FullPageChat: React.FC<FullPageChatProps> = ({ onClose }) => {
                     <div className="whitespace-pre-wrap">
                       {(() => {
                         const content = message.text || message.content;
+                        
+                        // Handle various document link formats
                         const lines = content.split('\n');
+                        
+                        // Check if any line contains a document link pattern
+                        const hasDocumentLink = lines.some(line => 
+                          line.includes('Source:') && 
+                          (line.includes('.pdf') || line.includes('supabase.co'))
+                        );
+                        
+                        // Check if content has project structure with asterisks or bullets
+                        const hasProjectStructure = lines.some(line => 
+                          line.trim().startsWith('*') || 
+                          line.trim().startsWith('- ') ||
+                          line.trim().startsWith('•')
+                        );
+                        
+                        if (hasDocumentLink || hasProjectStructure) {
+                          return lines.map((line, i) => {
+                            // Handle the markdown link format like [text](url)
+                            const hasMarkdownLink = line.includes('[') && line.includes('](') && line.includes(')');
+                            
+                            if (hasMarkdownLink) {
+                              // First check if it's a source line
+                              if (line.includes('Source:') || line.includes('Source]')) {
+                                const sourcePattern = /(?:\*\*)?Source(?:\*\*)?: \[([^\]]+)\]\(([^)]+)\)/;
+                                const sourceMatch = line.match(sourcePattern);
+                                
+                                if (sourceMatch) {
+                                  const [_, text, url] = sourceMatch;
+                                  return (
+                                    <div key={i} className="mb-1">
+                                      Source: <a 
+                                        href={url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 hover:underline"
+                                      >
+                                        {text}
+                                      </a>
+                                    </div>
+                                  );
+                                }
+                              }
+                              
+                              // For any line with markdown links, parse them properly
+                              // This will handle all markdown links in the text
+                              return (
+                                <div 
+                                  key={i} 
+                                  className="mb-1"
+                                  dangerouslySetInnerHTML={{ 
+                                    __html: processMarkdownLinks(line) 
+                                  }}
+                                />
+                              );
+                            }
+                            
+                            // Source pattern matching for PDF links - format from screenshot
+                            const sourceLinkPattern1 = /\*?Source\*?:\s+\[?([\w\.\-]+\.pdf)\]?(?:\s+\((https?:\/\/[^\)]+)\))?/;
+                            const sourceMatch1 = line.match(sourceLinkPattern1);
+                            
+                            if (sourceMatch1) {
+                              const filename = sourceMatch1[1];
+                              let url = sourceMatch1[2];
+                              
+                              // If URL ends with a ?, remove it
+                              if (url && url.endsWith('?')) {
+                                url = url.substring(0, url.length - 1);
+                              }
+                              
+                              // If no URL provided, construct a default URL
+                              if (!url) {
+                                url = `https://khqwfkvnwtovvcbidwnl.supabase.co/storage/v1/object/public/documents/${encodeURIComponent(filename)}`;
+                              }
+                              
+                              return (
+                                <div key={i} className="mb-1">
+                                  Source: <a 
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                  >
+                                    {filename}
+                                  </a>
+                                </div>
+                              );
+                            }
+                            
+                            // Format structure like in the Mark Wingate example
+                            if (line.includes("**") || line.startsWith("*")) {
+                              // Remove asterisks for cleaner display
+                              const cleanLine = line.replace(/\*\*/g, "").replace(/\*/g, "");
+                              
+                              // First project number line: (e.g., "1. **Delivery of the 14.6B Hurricane and Storm Damage Risk Reduction System (HSDRRS)**:")
+                              if (line.match(/^\d+\.\s+\*\*.*\*\*:?$/)) {
+                                return (
+                                  <div key={i} className="font-semibold text-lg mt-4 mb-2">{cleanLine}</div>
+                                );
+                              } 
+                              // Second level header like *Location*, *Role*, etc.
+                              else if (line.match(/^\s*\*.*\*:/) || line.match(/^\s*-\s*\*.*\*:/)) {
+                                return (
+                                  <div key={i} className="font-medium mt-2 mb-1">{cleanLine}</div>
+                                );
+                              }
+                            }
+                            
+                            // Format bullet points and indented content
+                            if (line.trim().startsWith("- ") || line.trim().startsWith("* ") || line.trim().startsWith("• ")) {
+                              // Clean up any markdown in the line
+                              const cleanLine = line.replace(/\*\*/g, "").replace(/\*/g, "");
+                              return (
+                                <div key={i} className="ml-4 mb-1">• {cleanLine.trim().substring(2)}</div>
+                              );
+                            }
+                            
+                            // Projects list items with asterisks
+                            if (line.trim().startsWith("**")) {
+                              const bulletPoint = line.trim().replace(/^\*\*/, "").replace(/\*\*:?$/, ":");
+                              return (
+                                <div key={i} className="font-medium mt-2 mb-1">{bulletPoint}</div>
+                              );
+                            }
+                            
+                            // For numeric project points (like "1. Project name")
+                            if (line.match(/^\d+\.\s+/)) {
+                              // Remove any markdown
+                              const cleanLine = line.replace(/\*\*/g, "").replace(/\*/g, "");
+                              return (
+                                <div key={i} className="font-medium mt-3 mb-1">{cleanLine}</div>
+                              );
+                            }
+                            
+                            // For all other lines, render normally but clean up any markdown
+                            const cleanLine = line.replace(/\*\*/g, "").replace(/\*/g, "");
+                            return <div key={i} className="mb-1">{cleanLine}</div>;
+                          });
+                        }
+                        
+                        // If no document links detected, proceed with the existing rendering logic
                         const fileReferences = message.metadata?.fileReferences || [];
                         const fileContents = message.metadata?.fileContents || {};
                         

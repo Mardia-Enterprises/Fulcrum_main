@@ -1,7 +1,7 @@
 import os
 import json
 import sys
-from mistralai import Mistral
+from mistralai import Mistral #mistralai>=0.0.7
 from dotenv import load_dotenv
 
 # Import the Supabase uploader function
